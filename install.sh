@@ -5,15 +5,12 @@
 # Usage:
 #   ./install.sh /path/to/repo
 #   ./install.sh .
-#
-# Creates the dispatch system and worktrees for autonomous agents.
 
 set -e
 
 TARGET_REPO="${1:-.}"
 
 # Colors
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 NC='\033[0m'
@@ -28,72 +25,80 @@ echo ""
 if [ "$TARGET_REPO" = "." ]; then
     TARGET_REPO="$(pwd)"
 else
-    TARGET_REPO="$(cd "$TARGET_REPO" 2>/dev/null && pwd)" || {
-        echo -e "${RED}ERROR: Directory not found: $TARGET_REPO${NC}"
-        exit 1
-    }
-fi
-
-# Validate git repo
-if [ ! -d "$TARGET_REPO/.git" ]; then
-    echo -e "${RED}ERROR: Not a git repository${NC}"
-    exit 1
+    TARGET_REPO="$(cd "$TARGET_REPO" 2>/dev/null && pwd)"
 fi
 
 cd "$TARGET_REPO"
 REPO_NAME="$(basename "$TARGET_REPO")"
-LAB_DIR="$(dirname "$TARGET_REPO")"
 
 echo "Repository: $TARGET_REPO"
 echo ""
 
 # Create structure
-echo -e "${GREEN}[1/3]${NC} Creating directory structure..."
+echo -e "${GREEN}[1/4]${NC} Creating directories..."
 mkdir -p .claude/skills/team-coord/scripts
 mkdir -p .agent-mail/results
 
-# Create dispatch.sh
-echo -e "${GREEN}[2/3]${NC} Installing dispatch.sh..."
-cat > .claude/skills/team-coord/scripts/dispatch.sh << 'DISPATCHEOF'
+# Create agents.conf (user configures this)
+echo -e "${GREEN}[2/4]${NC} Creating agents.conf..."
+cat > .claude/agents.conf << 'EOF'
+# Agent Configuration
+# Format: AGENT_NAME:DOMAIN_PATH
+#
+# Example:
+#   api:src/api
+#   frontend:src/components
+#   backend:services
+#
+# Worktrees will be created as: ../reponame-agentname/
+# Edit this file to add/remove agents
+
+api:src/api
+frontend:src/frontend
+backend:src/backend
+EOF
+
+# Create dispatch.sh (reads from agents.conf)
+echo -e "${GREEN}[3/4]${NC} Installing dispatch.sh..."
+cat > .claude/skills/team-coord/scripts/dispatch.sh << 'EOF'
 #!/bin/bash
 # Usage: dispatch.sh <agent> "<task>"
-# Dispatches a task to an agent headlessly in their worktree
 
 set -e
 
 AGENT=$1
 TASK=$2
 
+REPO_ROOT=$(git rev-parse --show-toplevel)
+CONFIG_FILE="$REPO_ROOT/.claude/agents.conf"
+
+# Show available agents if no args
 if [ -z "$AGENT" ] || [ -z "$TASK" ]; then
     echo "Usage: dispatch.sh <agent> \"<task>\""
     echo ""
-    echo "Configure agents in this file (edit the case statement below)"
+    echo "Available agents (from .claude/agents.conf):"
+    grep -v "^#" "$CONFIG_FILE" | grep -v "^$" | while read line; do
+        name=$(echo "$line" | cut -d: -f1)
+        domain=$(echo "$line" | cut -d: -f2)
+        echo "  $name -> $domain/"
+    done
     exit 1
 fi
 
-REPO_ROOT=$(git rev-parse --show-toplevel)
+# Read agent config
+DOMAIN=$(grep "^${AGENT}:" "$CONFIG_FILE" | cut -d: -f2)
+
+if [ -z "$DOMAIN" ]; then
+    echo "Unknown agent: $AGENT"
+    echo "Add it to .claude/agents.conf"
+    exit 1
+fi
+
 LAB_DIR=$(dirname "$REPO_ROOT")
 REPO_NAME=$(basename "$REPO_ROOT")
+WORK_DIR="$LAB_DIR/${REPO_NAME}-${AGENT}"
 
-# ═══════════════════════════════════════════════════════════════════════════
-# CONFIGURE YOUR AGENTS HERE
-# Map agent name to: worktree directory and domain (files they work with)
-# ═══════════════════════════════════════════════════════════════════════════
-case $AGENT in
-    api)      WORK_DIR="$LAB_DIR/${REPO_NAME}-api"      ; DOMAIN="src/api" ;;
-    frontend) WORK_DIR="$LAB_DIR/${REPO_NAME}-frontend" ; DOMAIN="src/frontend" ;;
-    backend)  WORK_DIR="$LAB_DIR/${REPO_NAME}-backend"  ; DOMAIN="src/backend" ;;
-    # Add more agents as needed:
-    # mobile)   WORK_DIR="$LAB_DIR/${REPO_NAME}-mobile"   ; DOMAIN="apps/mobile" ;;
-    # pipeline) WORK_DIR="$LAB_DIR/${REPO_NAME}-pipeline" ; DOMAIN="scripts/" ;;
-    *)
-        echo "Unknown agent: $AGENT"
-        echo "Edit dispatch.sh to add this agent"
-        exit 1
-        ;;
-esac
-
-# Create worktree if it doesn't exist
+# Create worktree if needed
 if [ ! -d "$WORK_DIR" ]; then
     echo "Creating worktree: $WORK_DIR"
     git worktree add --detach "$WORK_DIR" HEAD
@@ -103,41 +108,31 @@ RESULTS_DIR="$REPO_ROOT/.agent-mail/results/$AGENT"
 TIMESTAMP=$(date +%s)
 mkdir -p "$RESULTS_DIR"
 
-# Build prompt for agent
-read -r -d '' SYSTEM_PROMPT << EOF || true
+# Build prompt
+read -r -d '' PROMPT << PROMPTEOF || true
 You are the $AGENT agent.
-Worktree: $WORK_DIR (your isolated working directory)
-Focus domain: $DOMAIN/
+Worktree: $WORK_DIR
+Domain: $DOMAIN/
 
-TASK FROM LEADER:
-$TASK
+TASK: $TASK
 
 RULES:
-1. Complete the task autonomously
-2. Focus on files in your domain: $DOMAIN/
-3. When done, write results to: $RESULTS_DIR/$TIMESTAMP-result.md
-4. Create feature branches for your changes
-5. Push when complete
+1. Focus on files in: $DOMAIN/
+2. Write results to: $RESULTS_DIR/$TIMESTAMP-result.md
+3. Create feature branch, push when done
 
-RESULT FILE FORMAT (write to $RESULTS_DIR/$TIMESTAMP-result.md):
+RESULT FORMAT:
 ---
 agent: $AGENT
-status: success|failed|needs-help
-timestamp: $TIMESTAMP
+status: success|failed
 ---
-
 ## Summary
 <what you did>
-
 ## Files Changed
-<list of files modified>
-
+<list>
 ## Branch
-<branch name you pushed>
-
-## Notes
-<anything important>
-EOF
+<branch pushed>
+PROMPTEOF
 
 echo "═══════════════════════════════════════════════════════════"
 echo "DISPATCHING TO: $AGENT"
@@ -146,37 +141,34 @@ echo "WORKTREE: $WORK_DIR"
 echo "DOMAIN: $DOMAIN/"
 echo "═══════════════════════════════════════════════════════════"
 
-# Run agent in their worktree
 cd "$WORK_DIR"
 
-if timeout 1800 claude -p "$SYSTEM_PROMPT" \
+if timeout 1800 claude -p "$PROMPT" \
     --max-turns 30 \
     --output-format json \
     > "$RESULTS_DIR/$TIMESTAMP-output.json" 2>&1; then
-    echo ""
     echo "═══════════════════════════════════════════════════════════"
     echo "✓ $AGENT COMPLETED"
     echo "Results: $RESULTS_DIR/$TIMESTAMP-result.md"
     echo "═══════════════════════════════════════════════════════════"
 else
     EXIT_CODE=$?
-    echo ""
     echo "═══════════════════════════════════════════════════════════"
     echo "✗ $AGENT FAILED (exit code: $EXIT_CODE)"
     echo "Check: $RESULTS_DIR/$TIMESTAMP-output.json"
     echo "═══════════════════════════════════════════════════════════"
     exit $EXIT_CODE
 fi
-DISPATCHEOF
+EOF
 
 chmod +x .claude/skills/team-coord/scripts/dispatch.sh
 
 # Create SKILL.md
-echo -e "${GREEN}[3/3]${NC} Creating skill docs..."
+echo -e "${GREEN}[4/4]${NC} Creating docs..."
 cat > .claude/skills/team-coord/SKILL.md << 'EOF'
 ---
 name: team-coord
-description: Dispatch tasks to autonomous agents in git worktrees
+description: Dispatch tasks to autonomous agents
 ---
 
 # Team Coordination
@@ -187,61 +179,33 @@ description: Dispatch tasks to autonomous agents in git worktrees
 .claude/skills/team-coord/scripts/dispatch.sh <agent> "<task>"
 ```
 
-## How It Works
-
-```
-Leader (main repo) ─────────────────────────────────
-       │
-       ├── dispatch.sh api ──► repo-api/ (worktree)
-       ├── dispatch.sh frontend ──► repo-frontend/ (worktree)
-       └── dispatch.sh backend ──► repo-backend/ (worktree)
-```
-
-1. Each agent runs in an isolated git worktree
-2. Agents work autonomously (30 turns max, 30 min timeout)
-3. Results written to `.agent-mail/results/{agent}/`
-4. Changes pushed to feature branches
-
 ## Configure Agents
 
-Edit `dispatch.sh` case statement to define your agents:
+Edit `.claude/agents.conf`:
 
-```bash
-case $AGENT in
-    api)      WORK_DIR="..." ; DOMAIN="src/api" ;;
-    frontend) WORK_DIR="..." ; DOMAIN="src/frontend" ;;
-    # add more...
-esac
+```
+api:src/api
+frontend:src/components
+backend:services
+mobile:apps/mobile
 ```
 
 ## Example
 
 ```bash
-# Dispatch API work
-.claude/skills/team-coord/scripts/dispatch.sh api "Add user auth endpoint"
-
-# Check results
-cat .agent-mail/results/api/*-result.md
+.claude/skills/team-coord/scripts/dispatch.sh api "Add auth endpoint"
 ```
 EOF
 
 # Gitignore
-if ! grep -q "agent-mail/results" .gitignore 2>/dev/null; then
-    echo "" >> .gitignore
-    echo "# Multi-agent system" >> .gitignore
-    echo ".agent-mail/results/" >> .gitignore
-fi
+grep -q "agent-mail/results" .gitignore 2>/dev/null || echo ".agent-mail/results/" >> .gitignore
 
 echo ""
-echo -e "${GREEN}╔══════════════════════════════════════════════════════════╗${NC}"
-echo -e "${GREEN}║              Installation Complete!                       ║${NC}"
-echo -e "${GREEN}╚══════════════════════════════════════════════════════════╝${NC}"
+echo -e "${GREEN}Done!${NC}"
 echo ""
-echo "Next steps:"
+echo "Configure your agents:"
+echo "  vim .claude/agents.conf"
 echo ""
-echo "  1. Edit dispatch.sh to configure your agents:"
-echo "     vim .claude/skills/team-coord/scripts/dispatch.sh"
-echo ""
-echo "  2. Test:"
-echo "     .claude/skills/team-coord/scripts/dispatch.sh api \"Hello, list files\""
+echo "Then dispatch:"
+echo "  .claude/skills/team-coord/scripts/dispatch.sh api \"Your task\""
 echo ""
