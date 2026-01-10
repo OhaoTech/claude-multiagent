@@ -22,6 +22,7 @@ import {
 import { useChatStore } from '../../stores/chatStore'
 import { useTaskStore, type Task } from '../../stores/taskStore'
 import { useProjectStore } from '../../stores/projectStore'
+import { TaskTemplates } from './TaskTemplates'
 
 const PRIORITY_LABELS: Record<number, { label: string; color: string }> = {
   0: { label: 'Low', color: 'text-gray-400' },
@@ -222,6 +223,11 @@ export function TaskQueue({ compact = false }: TaskQueueProps) {
             <option value="failed">Failed</option>
           </select>
         </div>
+      )}
+
+      {/* Task Templates */}
+      {!compact && (
+        <TaskTemplates onTaskCreated={handleRefresh} />
       )}
 
       {/* Task List */}

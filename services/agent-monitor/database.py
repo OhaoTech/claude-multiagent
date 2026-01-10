@@ -126,6 +126,23 @@ def init_db():
             )
         """)
 
+        # Task templates table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS task_templates (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                priority INTEGER DEFAULT 1,
+                agent_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL
+            )
+        """)
+
         # Initialize default global settings if not exist
         default_settings = {
             "theme": "dark",
@@ -852,6 +869,102 @@ def get_velocity_data(project_id: str, limit: int = 10) -> list[dict]:
             "completed_tasks": row["completed_tasks"] or 0,
             "velocity": row["completed_tasks"] or 0
         } for row in rows]
+
+
+# =============================================================================
+# Task Template Operations
+# =============================================================================
+
+def create_task_template(
+    project_id: str,
+    name: str,
+    title: str,
+    description: Optional[str] = None,
+    priority: int = 1,
+    agent_id: Optional[str] = None
+) -> dict:
+    """Create a new task template."""
+    template_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO task_templates (
+                id, project_id, name, title, description, priority,
+                agent_id, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (template_id, project_id, name, title, description, priority, agent_id, now, now))
+
+    return get_task_template(template_id)
+
+
+def get_task_template(template_id: str) -> Optional[dict]:
+    """Get a task template by ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM task_templates WHERE id = ?", (template_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def list_task_templates(project_id: str) -> list[dict]:
+    """List all task templates for a project."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT * FROM task_templates WHERE project_id = ? ORDER BY name ASC",
+            (project_id,)
+        )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def update_task_template(template_id: str, **kwargs) -> Optional[dict]:
+    """Update a task template."""
+    allowed_fields = {"name", "title", "description", "priority", "agent_id"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
+
+    if not updates:
+        return get_task_template(template_id)
+
+    updates["updated_at"] = datetime.utcnow().isoformat()
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates.keys())
+    values = list(updates.values()) + [template_id]
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE task_templates SET {set_clause} WHERE id = ?", values)
+
+    return get_task_template(template_id)
+
+
+def delete_task_template(template_id: str) -> bool:
+    """Delete a task template."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM task_templates WHERE id = ?", (template_id,))
+        return cursor.rowcount > 0
+
+
+def create_task_from_template(
+    template_id: str,
+    sprint_id: Optional[str] = None
+) -> Optional[dict]:
+    """Create a new task from a template."""
+    template = get_task_template(template_id)
+    if not template:
+        return None
+
+    return create_task(
+        project_id=template["project_id"],
+        title=template["title"],
+        description=template["description"],
+        agent_id=template["agent_id"],
+        sprint_id=sprint_id,
+        priority=template["priority"]
+    )
 
 
 # Initialize database on import

@@ -293,6 +293,46 @@ class SchedulerStatus(BaseModel):
 
 
 # =============================================================================
+# Task Template Models
+# =============================================================================
+
+class TaskTemplateCreate(BaseModel):
+    """Request to create a task template."""
+    name: str
+    title: str
+    description: Optional[str] = None
+    priority: int = 1
+    agent_id: Optional[str] = None
+
+
+class TaskTemplateUpdate(BaseModel):
+    """Request to update a task template."""
+    name: Optional[str] = None
+    title: Optional[str] = None
+    description: Optional[str] = None
+    priority: Optional[int] = None
+    agent_id: Optional[str] = None
+
+
+class TaskTemplateResponse(BaseModel):
+    """Task template response model."""
+    id: str
+    project_id: str
+    name: str
+    title: str
+    description: Optional[str]
+    priority: int
+    agent_id: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class CreateFromTemplateRequest(BaseModel):
+    """Request to create a task from a template."""
+    sprint_id: Optional[str] = None
+
+
+# =============================================================================
 # Sprint Planning Models
 # =============================================================================
 

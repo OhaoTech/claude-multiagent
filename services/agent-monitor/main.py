@@ -29,6 +29,7 @@ from models import (
     SettingsResponse, SettingsUpdate,
     ProjectSettingsResponse, ProjectSettingsUpdate,
     TaskCreate, TaskUpdate, TaskResponse, TaskAssign, QueueStats, SchedulerStatus,
+    TaskTemplateCreate, TaskTemplateUpdate, TaskTemplateResponse, CreateFromTemplateRequest,
     SprintCreate, SprintUpdate, SprintResponse, SprintStats,
     UsageAnalytics, ModelUsage, DailyActivity
 )
@@ -921,6 +922,105 @@ async def stop_scheduler():
         interval=scheduler.interval if scheduler else 5.0,
         last_run=scheduler.last_run if scheduler else None
     )
+
+
+# =============================================================================
+# Task Template Endpoints
+# =============================================================================
+
+@app.get("/api/projects/{project_id}/templates", response_model=list[TaskTemplateResponse])
+async def list_task_templates(project_id: str):
+    """List all task templates for a project."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    templates = db.list_task_templates(project_id)
+    return [TaskTemplateResponse(**t) for t in templates]
+
+
+@app.post("/api/projects/{project_id}/templates", response_model=TaskTemplateResponse)
+async def create_task_template(project_id: str, request: TaskTemplateCreate):
+    """Create a new task template."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    template = db.create_task_template(
+        project_id=project_id,
+        name=request.name,
+        title=request.title,
+        description=request.description,
+        priority=request.priority,
+        agent_id=request.agent_id
+    )
+
+    return TaskTemplateResponse(**template)
+
+
+@app.get("/api/projects/{project_id}/templates/{template_id}", response_model=TaskTemplateResponse)
+async def get_task_template(project_id: str, template_id: str):
+    """Get a specific task template."""
+    from fastapi import HTTPException
+
+    template = db.get_task_template(template_id)
+    if not template or template["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    return TaskTemplateResponse(**template)
+
+
+@app.put("/api/projects/{project_id}/templates/{template_id}", response_model=TaskTemplateResponse)
+async def update_task_template(project_id: str, template_id: str, request: TaskTemplateUpdate):
+    """Update a task template."""
+    from fastapi import HTTPException
+
+    template = db.get_task_template(template_id)
+    if not template or template["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    updates = request.model_dump(exclude_unset=True)
+    updated = db.update_task_template(template_id, **updates)
+
+    return TaskTemplateResponse(**updated)
+
+
+@app.delete("/api/projects/{project_id}/templates/{template_id}")
+async def delete_task_template(project_id: str, template_id: str):
+    """Delete a task template."""
+    from fastapi import HTTPException
+
+    template = db.get_task_template(template_id)
+    if not template or template["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    db.delete_task_template(template_id)
+    return {"status": "deleted"}
+
+
+@app.post("/api/projects/{project_id}/templates/{template_id}/create-task", response_model=TaskResponse)
+async def create_task_from_template(project_id: str, template_id: str, request: CreateFromTemplateRequest):
+    """Create a new task from a template."""
+    from fastapi import HTTPException
+
+    template = db.get_task_template(template_id)
+    if not template or template["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    task = db.create_task_from_template(template_id, sprint_id=request.sprint_id)
+    if not task:
+        raise HTTPException(status_code=500, detail="Failed to create task from template")
+
+    await manager.broadcast({
+        "type": "task_created",
+        "data": {"task_id": task["id"]}
+    })
+
+    return TaskResponse(**task)
 
 
 # =============================================================================
