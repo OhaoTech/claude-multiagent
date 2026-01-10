@@ -192,39 +192,65 @@ function handleMessage(
       break
 
     case 'state':
-      // Agent state change
-      updateAgentState(data.agent, {
-        state: data.state,
-        run_count: data.run_count,
-        current_task: data.current_task,
-        elapsed: data.elapsed,
-      })
-      addActivity({
-        type: 'state',
-        agent: data.agent,
-        content: `State: ${data.state}${data.current_task ? ` - ${data.current_task}` : ''}`,
-        timestamp: Date.now(),
-      })
+      // Agent state change from watcher
+      // Message format: { type: "state", data: { current: "agent"|null, last: "agent", status: "success"|"running", completed: timestamp } }
+      {
+        const stateData = data.data || data
+        const agent = stateData.current || stateData.last
+
+        // Skip if no agent name (invalid state)
+        if (!agent) break
+
+        // Map status to agent state
+        const agentState = stateData.status === 'running' ? 'running' : 'idle'
+
+        updateAgentState(agent, {
+          state: agentState,
+          run_count: stateData.run_count || 0,
+          current_task: stateData.current_task,
+          elapsed: stateData.elapsed,
+        })
+        addActivity({
+          type: 'state',
+          agent: agent,
+          content: `State: ${agentState}${stateData.current_task ? ` - ${stateData.current_task}` : ''}`,
+          timestamp: Date.now(),
+        })
+      }
       break
 
     case 'result':
-      // Tool result
-      addActivity({
-        type: 'result',
-        agent: data.agent,
-        content: data.content || 'Tool completed',
-        timestamp: Date.now(),
-      })
+      // Tool result from watcher
+      // Message format: { type: "result", data: { agent: "...", summary: "...", ... } }
+      {
+        const resultData = data.data || data
+        const agent = resultData.agent
+        if (!agent) break
+
+        addActivity({
+          type: 'result',
+          agent: agent,
+          content: resultData.summary || resultData.content || 'Task completed',
+          timestamp: Date.now(),
+        })
+      }
       break
 
     case 'output':
-      // Stream output
-      addActivity({
-        type: 'output',
-        agent: data.agent,
-        content: data.content || '',
-        timestamp: Date.now(),
-      })
+      // Stream output from watcher
+      // Message format: { type: "output", data: { agent: "...", result: "...", ... } }
+      {
+        const outputData = data.data || data
+        const agent = outputData.agent
+        if (!agent) break
+
+        addActivity({
+          type: 'output',
+          agent: agent,
+          content: outputData.result || outputData.content || '',
+          timestamp: Date.now(),
+        })
+      }
       break
 
     case 'error':

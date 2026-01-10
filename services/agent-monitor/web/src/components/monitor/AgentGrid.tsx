@@ -46,8 +46,9 @@ export function AgentGrid({ onAgentSelect, selectedAgent }: AgentGridProps) {
   }))
 
   // Add any agents from WS that aren't in DB (legacy support)
+  // Filter out undefined/empty agent names
   Object.values(agentStates).forEach((wsAgent) => {
-    if (!mergedAgents.find((a) => a.agent === wsAgent.agent)) {
+    if (wsAgent.agent && !mergedAgents.find((a) => a.agent === wsAgent.agent)) {
       mergedAgents.push(wsAgent)
     }
   })
