@@ -235,6 +235,15 @@ export function ChatPanel({ width }: ChatPanelProps) {
   )
 }
 
+// Check if content is a task notification (background task completion signal)
+function parseTaskNotification(content: string): { isNotification: boolean; taskId: string; status: string; summary: string } | null {
+  const match = content.match(/<task-notification>[\s\S]*?<task-id>([^<]+)<\/task-id>[\s\S]*?<status>([^<]+)<\/status>[\s\S]*?<summary>([^<]+)<\/summary>[\s\S]*?<\/task-notification>/)
+  if (match) {
+    return { isNotification: true, taskId: match[1], status: match[2], summary: match[3] }
+  }
+  return null
+}
+
 // Check if content is a tool use or result that should be collapsible
 function parseToolMessage(content: string): { type: 'tool_use' | 'tool_result' | null; name: string; body: string } {
   // Match [Tool: ToolName] pattern
@@ -250,6 +259,46 @@ function parseToolMessage(content: string): { type: 'tool_use' | 'tool_result' |
   }
 
   return { type: null, name: '', body: content }
+}
+
+// Task notification component (for background task completion signals)
+function TaskNotificationBubble({
+  taskId,
+  status,
+  summary,
+}: {
+  taskId: string
+  status: string
+  summary: string
+}) {
+  const isSuccess = status === 'completed'
+
+  return (
+    <div className="flex gap-2">
+      <div
+        className={`w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 ${
+          isSuccess ? 'bg-blue-600' : 'bg-orange-600'
+        }`}
+      >
+        <Terminal size={14} />
+      </div>
+      <div
+        className={`flex-1 min-w-0 max-w-[85%] rounded-lg px-3 py-2 text-xs ${
+          isSuccess
+            ? 'bg-blue-900/30 border border-blue-800/50'
+            : 'bg-orange-900/30 border border-orange-800/50'
+        }`}
+      >
+        <div className="flex items-center gap-2">
+          <span className={`font-medium ${isSuccess ? 'text-blue-300' : 'text-orange-300'}`}>
+            Task {status}
+          </span>
+          <span className="text-[var(--text-secondary)] font-mono">{taskId.slice(0, 7)}</span>
+        </div>
+        <div className="text-[var(--text-secondary)] mt-1">{summary}</div>
+      </div>
+    </div>
+  )
 }
 
 // Collapsible tool message component
@@ -322,6 +371,18 @@ function MessageBubble({ message }: { message: { type: string; content: string }
   // Skip empty messages
   if (!message.content || !message.content.trim()) {
     return null
+  }
+
+  // Check for task notifications first (background task completion signals)
+  const taskNotification = parseTaskNotification(message.content)
+  if (taskNotification) {
+    return (
+      <TaskNotificationBubble
+        taskId={taskNotification.taskId}
+        status={taskNotification.status}
+        summary={taskNotification.summary}
+      />
+    )
   }
 
   // Check for tool use / result patterns in ALL messages (might be mistyped)
