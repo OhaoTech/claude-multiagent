@@ -31,7 +31,7 @@ function App() {
     const saved = localStorage.getItem(STORAGE_TAB)
     return (saved === 'monitor' || saved === 'editor') ? saved : 'editor'
   })
-  const [mobileTab, setMobileTab] = useState<MobileTab>('chat')
+  const [mobileTab, setMobileTab] = useState<MobileTab>('monitor')
   const [showSettings, setShowSettings] = useState(false)
   const [showSkills, setShowSkills] = useState(false)
   const [initialized, setInitialized] = useState(false)
@@ -150,7 +150,12 @@ function App() {
           )}
           {mobileTab === 'editor' && (
             <div className="h-full w-full overflow-hidden">
-              {ideTab === 'editor' ? <EditorTabs /> : <MonitorView />}
+              <EditorTabs />
+            </div>
+          )}
+          {mobileTab === 'monitor' && (
+            <div className="h-full w-full overflow-hidden">
+              <MonitorView />
             </div>
           )}
           {mobileTab === 'chat' && (

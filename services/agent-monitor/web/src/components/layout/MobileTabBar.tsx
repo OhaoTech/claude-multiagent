@@ -1,6 +1,6 @@
-import { FolderTree, Code, MessageSquare } from 'lucide-react'
+import { FolderTree, Code, MessageSquare, Activity } from 'lucide-react'
 
-export type MobileTab = 'files' | 'editor' | 'chat'
+export type MobileTab = 'files' | 'editor' | 'monitor' | 'chat'
 
 interface MobileTabBarProps {
   activeTab: MobileTab
@@ -11,6 +11,7 @@ export function MobileTabBar({ activeTab, onTabChange }: MobileTabBarProps) {
   const tabs: { id: MobileTab; label: string; icon: React.ReactNode }[] = [
     { id: 'files', label: 'Files', icon: <FolderTree size={20} /> },
     { id: 'editor', label: 'Editor', icon: <Code size={20} /> },
+    { id: 'monitor', label: 'Monitor', icon: <Activity size={20} /> },
     { id: 'chat', label: 'Chat', icon: <MessageSquare size={20} /> },
   ]
 

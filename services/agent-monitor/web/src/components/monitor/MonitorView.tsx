@@ -1,13 +1,14 @@
 import { useState } from 'react'
-import { LayoutGrid, Network } from 'lucide-react'
+import { LayoutGrid, Network, ListTodo } from 'lucide-react'
 import { AgentGrid } from './AgentGrid'
 import { TeamNetworkView } from './TeamNetworkView'
+import { TaskQueue } from './TaskQueue'
 import { StateBanner } from './StateBanner'
 import { ActivityFeed } from './ActivityFeed'
 import { SessionsList } from './SessionsList'
 import { useChatStore } from '../../stores/chatStore'
 
-type ViewMode = 'grid' | 'network'
+type ViewMode = 'grid' | 'network' | 'queue'
 
 export function MonitorView() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
@@ -57,12 +58,24 @@ export function MonitorView() {
             <Network size={14} />
             Network
           </button>
+          <button
+            onClick={() => setViewMode('queue')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+              viewMode === 'queue'
+                ? 'bg-[var(--accent)] text-white'
+                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
+            }`}
+            title="Task Queue"
+          >
+            <ListTodo size={14} />
+            Queue
+          </button>
         </div>
       </div>
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
-        {viewMode === 'grid' ? (
+        {viewMode === 'grid' && (
           <>
             {/* Agent Grid */}
             <AgentGrid
@@ -79,7 +92,9 @@ export function MonitorView() {
               onSelectSession={handleSessionSelect}
             />
           </>
-        ) : (
+        )}
+
+        {viewMode === 'network' && (
           <>
             {/* Network View - takes most of the space */}
             <div className="flex-1 min-h-[300px]">
@@ -94,6 +109,10 @@ export function MonitorView() {
               <ActivityFeed />
             </div>
           </>
+        )}
+
+        {viewMode === 'queue' && (
+          <TaskQueue />
         )}
       </div>
     </div>

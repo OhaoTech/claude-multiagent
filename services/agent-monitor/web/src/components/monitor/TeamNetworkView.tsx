@@ -18,6 +18,7 @@ import { RefreshCw } from 'lucide-react'
 import { AgentNode, type AgentNodeData } from './AgentNode'
 import { useWsStore, type TeamState } from '../../stores/wsStore'
 import { useProjectStore } from '../../stores/projectStore'
+import { useIsMobile } from '../../hooks/useIsMobile'
 
 // Custom node types
 const nodeTypes = {
@@ -189,6 +190,7 @@ interface TeamNetworkViewProps {
 export function TeamNetworkView({ onAgentSelect, selectedAgent }: TeamNetworkViewProps) {
   const { teamState, fetchTeamState } = useWsStore()
   const { activeProject, agents: dbAgents } = useProjectStore()
+  const isMobile = useIsMobile()
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
@@ -237,84 +239,102 @@ export function TeamNetworkView({ onAgentSelect, selectedAgent }: TeamNetworkVie
         onNodeClick={onNodeClick}
         nodeTypes={nodeTypes}
         fitView
-        fitViewOptions={{ padding: 0.2 }}
-        minZoom={0.5}
+        fitViewOptions={{ padding: isMobile ? 0.1 : 0.2 }}
+        minZoom={0.3}
         maxZoom={2}
         defaultEdgeOptions={{
           type: 'smoothstep',
         }}
+        // Enable touch gestures on mobile
+        panOnDrag={true}
+        zoomOnPinch={true}
+        zoomOnScroll={!isMobile}
       >
         <Background color="var(--border)" gap={20} />
-        <Controls className="!bg-[var(--bg-tertiary)] !border-[var(--border)] !rounded" />
-        <MiniMap
-          className="!bg-[var(--bg-tertiary)] !border-[var(--border)]"
-          nodeColor={(n) => {
-            const nodeData = n.data as AgentNodeData
-            const status = nodeData?.status
-            switch (status) {
-              case 'working':
-                return '#22c55e'
-              case 'blocked':
-                return '#ef4444'
-              case 'waiting':
-                return '#f97316'
-              case 'done':
-                return '#3b82f6'
-              default:
-                return '#6b7280'
-            }
-          }}
+        <Controls
+          className="!bg-[var(--bg-tertiary)] !border-[var(--border)] !rounded"
+          showZoom={!isMobile}
+          showFitView={true}
+          showInteractive={false}
         />
+        {/* Hide MiniMap on mobile */}
+        {!isMobile && (
+          <MiniMap
+            className="!bg-[var(--bg-tertiary)] !border-[var(--border)]"
+            nodeColor={(n) => {
+              const nodeData = n.data as AgentNodeData
+              const status = nodeData?.status
+              switch (status) {
+                case 'working':
+                  return '#22c55e'
+                case 'blocked':
+                  return '#ef4444'
+                case 'waiting':
+                  return '#f97316'
+                case 'done':
+                  return '#3b82f6'
+                default:
+                  return '#6b7280'
+              }
+            }}
+          />
+        )}
 
-        {/* Status Panel */}
-        <Panel position="top-left" className="bg-[var(--bg-tertiary)] rounded-lg p-3 border border-[var(--border)]">
-          <div className="flex items-center gap-4 text-sm">
+        {/* Status Panel - Compact on mobile */}
+        <Panel
+          position="top-left"
+          className={`bg-[var(--bg-tertiary)] rounded-lg border border-[var(--border)] ${isMobile ? 'p-2' : 'p-3'}`}
+        >
+          <div className={`flex items-center gap-2 ${isMobile ? 'text-xs' : 'text-sm gap-4'}`}>
             <div>
-              <span className="text-[var(--text-secondary)]">Stage:</span>{' '}
+              <span className="text-[var(--text-secondary)]">{isMobile ? '' : 'Stage: '}</span>
               <span className="font-semibold text-[var(--accent)]">{stageLabel}</span>
             </div>
             <div>
-              <span className="text-[var(--text-secondary)]">Mode:</span>{' '}
+              <span className="text-[var(--text-secondary)]">{isMobile ? '' : 'Mode: '}</span>
               <span className="font-medium">{modeLabel}</span>
             </div>
             <button
               onClick={handleRefresh}
-              className="p-1.5 hover:bg-[var(--bg-secondary)] rounded transition-colors"
+              className="p-1 hover:bg-[var(--bg-secondary)] rounded transition-colors"
               title="Refresh team state"
             >
-              <RefreshCw size={14} />
+              <RefreshCw size={isMobile ? 12 : 14} />
             </button>
           </div>
 
-          {/* Sprint info */}
-          {teamState?.sprint?.name && (
+          {/* Sprint info - hide on mobile */}
+          {!isMobile && teamState?.sprint?.name && (
             <div className="mt-2 text-xs text-[var(--text-secondary)]">
               Sprint: {teamState.sprint.name}
             </div>
           )}
         </Panel>
 
-        {/* Legend */}
-        <Panel position="bottom-left" className="bg-[var(--bg-tertiary)] rounded-lg p-2 border border-[var(--border)]">
-          <div className="flex flex-wrap gap-3 text-xs">
+        {/* Legend - More compact on mobile */}
+        <Panel
+          position="bottom-left"
+          className={`bg-[var(--bg-tertiary)] rounded-lg border border-[var(--border)] ${isMobile ? 'p-1.5' : 'p-2'}`}
+        >
+          <div className={`flex flex-wrap gap-2 ${isMobile ? 'text-[10px]' : 'text-xs gap-3'}`}>
             <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-full bg-gray-500" />
+              <div className={`${isMobile ? 'w-2 h-2' : 'w-3 h-3'} rounded-full bg-gray-500`} />
               <span>Idle</span>
             </div>
             <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-full bg-green-500" />
+              <div className={`${isMobile ? 'w-2 h-2' : 'w-3 h-3'} rounded-full bg-green-500`} />
               <span>Working</span>
             </div>
             <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-full bg-orange-500" />
+              <div className={`${isMobile ? 'w-2 h-2' : 'w-3 h-3'} rounded-full bg-orange-500`} />
               <span>Waiting</span>
             </div>
             <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-full bg-red-500" />
+              <div className={`${isMobile ? 'w-2 h-2' : 'w-3 h-3'} rounded-full bg-red-500`} />
               <span>Blocked</span>
             </div>
             <div className="flex items-center gap-1">
-              <div className="w-3 h-3 rounded-full bg-blue-500" />
+              <div className={`${isMobile ? 'w-2 h-2' : 'w-3 h-3'} rounded-full bg-blue-500`} />
               <span>Done</span>
             </div>
           </div>
