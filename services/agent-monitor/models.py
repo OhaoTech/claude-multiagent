@@ -337,6 +337,26 @@ class SprintStats(BaseModel):
     completion_percent: float = 0.0
 
 
+class BurndownPoint(BaseModel):
+    """A single point in the burndown chart."""
+    date: str
+    remaining: int
+    ideal: float
+    completed: int
+
+
+class VelocityPoint(BaseModel):
+    """Velocity data for a single sprint."""
+    sprint_id: str
+    sprint_name: str
+    status: str
+    start_date: Optional[str]
+    end_date: Optional[str]
+    total_tasks: int
+    completed_tasks: int
+    velocity: int
+
+
 # =============================================================================
 # Usage Analytics Models
 # =============================================================================

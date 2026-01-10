@@ -7,9 +7,12 @@ import {
   Clock,
   ChevronRight,
   X,
-  Trash2
+  Trash2,
+  BarChart2,
+  List
 } from 'lucide-react'
 import { useProjectStore } from '../../stores/projectStore'
+import { SprintCharts } from './SprintCharts'
 
 interface Sprint {
   id: string
@@ -41,6 +44,8 @@ interface Task {
   sprint_id: string | null
 }
 
+type ViewMode = 'tasks' | 'charts'
+
 export function SprintPlanning() {
   const { activeProject } = useProjectStore()
   const [sprints, setSprints] = useState<Sprint[]>([])
@@ -50,6 +55,7 @@ export function SprintPlanning() {
   const [backlogTasks, setBacklogTasks] = useState<Task[]>([])
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [viewMode, setViewMode] = useState<ViewMode>('tasks')
 
   const projectId = activeProject?.id
 
@@ -336,40 +342,72 @@ export function SprintPlanning() {
                   </div>
                 </div>
               )}
+
+              {/* View Toggle */}
+              <div className="flex gap-1 mt-4">
+                <button
+                  onClick={() => setViewMode('tasks')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                    viewMode === 'tasks'
+                      ? 'bg-[var(--accent)] text-white'
+                      : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
+                  }`}
+                >
+                  <List size={14} />
+                  Tasks
+                </button>
+                <button
+                  onClick={() => setViewMode('charts')}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                    viewMode === 'charts'
+                      ? 'bg-[var(--accent)] text-white'
+                      : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
+                  }`}
+                >
+                  <BarChart2 size={14} />
+                  Charts
+                </button>
+              </div>
             </div>
 
-            {/* Sprint Tasks */}
-            <div className="flex-1 overflow-y-auto p-4">
-              <h3 className="font-medium text-sm mb-2">Sprint Tasks ({sprintTasks.length})</h3>
-              {sprintTasks.length === 0 ? (
-                <div className="text-center text-[var(--text-secondary)] text-sm py-8 bg-[var(--bg-tertiary)] rounded">
-                  No tasks in this sprint. Drag tasks from backlog or create new ones.
+            {/* Content Area */}
+            <div className="flex-1 overflow-y-auto">
+              {viewMode === 'tasks' ? (
+                <div className="p-4">
+                  <h3 className="font-medium text-sm mb-2">Sprint Tasks ({sprintTasks.length})</h3>
+                  {sprintTasks.length === 0 ? (
+                    <div className="text-center text-[var(--text-secondary)] text-sm py-8 bg-[var(--bg-tertiary)] rounded">
+                      No tasks in this sprint. Drag tasks from backlog or create new ones.
+                    </div>
+                  ) : (
+                    <div className="space-y-1">
+                      {sprintTasks.map(task => (
+                        <div
+                          key={task.id}
+                          className="flex items-center justify-between p-2 bg-[var(--bg-tertiary)] rounded hover:bg-[var(--bg-secondary)] transition-colors"
+                        >
+                          <div className="flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full ${
+                              task.status === 'completed' ? 'bg-green-500' :
+                              task.status === 'running' ? 'bg-blue-500' :
+                              task.status === 'failed' ? 'bg-red-500' :
+                              'bg-gray-500'
+                            }`} />
+                            <span className="text-sm">{task.title}</span>
+                          </div>
+                          <button
+                            onClick={() => moveTaskToSprint(task.id, null)}
+                            className="text-xs text-[var(--text-secondary)] hover:text-white px-2 py-1 rounded hover:bg-[var(--bg-primary)]"
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               ) : (
-                <div className="space-y-1">
-                  {sprintTasks.map(task => (
-                    <div
-                      key={task.id}
-                      className="flex items-center justify-between p-2 bg-[var(--bg-tertiary)] rounded hover:bg-[var(--bg-secondary)] transition-colors"
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className={`w-2 h-2 rounded-full ${
-                          task.status === 'completed' ? 'bg-green-500' :
-                          task.status === 'running' ? 'bg-blue-500' :
-                          task.status === 'failed' ? 'bg-red-500' :
-                          'bg-gray-500'
-                        }`} />
-                        <span className="text-sm">{task.title}</span>
-                      </div>
-                      <button
-                        onClick={() => moveTaskToSprint(task.id, null)}
-                        className="text-xs text-[var(--text-secondary)] hover:text-white px-2 py-1 rounded hover:bg-[var(--bg-primary)]"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                <SprintCharts sprintId={selectedSprint.id} />
               )}
             </div>
           </>

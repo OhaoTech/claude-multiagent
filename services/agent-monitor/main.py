@@ -1081,6 +1081,24 @@ async def complete_sprint(project_id: str, sprint_id: str):
     return {"status": "completed"}
 
 
+@app.get("/api/projects/{project_id}/sprints/{sprint_id}/burndown")
+async def get_sprint_burndown(project_id: str, sprint_id: str):
+    """Get burndown data for a sprint."""
+    from fastapi import HTTPException
+
+    sprint = db.get_sprint(sprint_id)
+    if not sprint or sprint["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Sprint not found")
+
+    return db.get_sprint_burndown(sprint_id)
+
+
+@app.get("/api/projects/{project_id}/velocity")
+async def get_velocity(project_id: str, limit: int = 10):
+    """Get velocity data for completed sprints."""
+    return db.get_velocity_data(project_id, limit)
+
+
 # =============================================================================
 # Usage Analytics Endpoints
 # =============================================================================

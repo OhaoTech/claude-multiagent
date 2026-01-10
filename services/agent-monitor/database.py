@@ -734,5 +734,125 @@ def get_sprint_stats(sprint_id: str) -> dict:
         return stats
 
 
+def get_sprint_burndown(sprint_id: str) -> list[dict]:
+    """Get burndown data for a sprint.
+
+    Returns day-by-day remaining task count from sprint start to end/today.
+    """
+    sprint = get_sprint(sprint_id)
+    if not sprint:
+        return []
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get all tasks in this sprint with their completion dates
+        cursor.execute("""
+            SELECT id, status, created_at, completed_at
+            FROM tasks
+            WHERE sprint_id = ?
+        """, (sprint_id,))
+
+        tasks = [dict(row) for row in cursor.fetchall()]
+
+    if not tasks:
+        return []
+
+    # Determine date range
+    start_date = sprint.get("start_date")
+    end_date = sprint.get("end_date")
+
+    if not start_date:
+        # Use earliest task creation date
+        start_date = min(t["created_at"][:10] for t in tasks)
+    else:
+        start_date = start_date[:10]
+
+    if not end_date or sprint["status"] == "active":
+        # Use today for active sprints
+        end_date = datetime.utcnow().strftime("%Y-%m-%d")
+    else:
+        end_date = end_date[:10]
+
+    # Calculate remaining tasks for each day
+    from datetime import timedelta
+    burndown = []
+    total_tasks = len(tasks)
+
+    current = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+
+    # Calculate ideal burndown (linear from total to 0)
+    total_days = (end - current).days + 1
+
+    day_index = 0
+    while current <= end:
+        current_date = current.strftime("%Y-%m-%d")
+
+        # Count completed tasks up to this date
+        completed_count = sum(
+            1 for t in tasks
+            if t["completed_at"] and t["completed_at"][:10] <= current_date
+        )
+
+        remaining = total_tasks - completed_count
+        ideal = max(0, total_tasks - (total_tasks * day_index / max(1, total_days - 1))) if total_days > 1 else 0
+
+        burndown.append({
+            "date": current_date,
+            "remaining": remaining,
+            "ideal": round(ideal, 1),
+            "completed": completed_count
+        })
+
+        current += timedelta(days=1)
+        day_index += 1
+
+    return burndown
+
+
+def get_velocity_data(project_id: str, limit: int = 10) -> list[dict]:
+    """Get velocity data for completed sprints.
+
+    Returns completed task count per sprint, ordered by completion date.
+    """
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get completed sprints with their task counts
+        cursor.execute("""
+            SELECT
+                s.id,
+                s.name,
+                s.status,
+                s.start_date,
+                s.end_date,
+                COUNT(t.id) as total_tasks,
+                SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completed_tasks
+            FROM sprints s
+            LEFT JOIN tasks t ON t.sprint_id = s.id
+            WHERE s.project_id = ?
+            AND s.status IN ('completed', 'active')
+            GROUP BY s.id
+            ORDER BY COALESCE(s.end_date, s.updated_at) DESC
+            LIMIT ?
+        """, (project_id, limit))
+
+        # Reverse to show oldest first
+        rows = list(cursor.fetchall())
+        rows.reverse()
+
+        return [{
+            "sprint_id": row["id"],
+            "sprint_name": row["name"],
+            "status": row["status"],
+            "start_date": row["start_date"],
+            "end_date": row["end_date"],
+            "total_tasks": row["total_tasks"] or 0,
+            "completed_tasks": row["completed_tasks"] or 0,
+            "velocity": row["completed_tasks"] or 0
+        } for row in rows]
+
+
 # Initialize database on import
 init_db()
