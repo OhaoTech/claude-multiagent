@@ -576,6 +576,39 @@ async def uninstall_project_skill(project_id: str, skill_id: str):
 
 
 # =============================================================================
+# Team State Endpoint (workflow integration)
+# =============================================================================
+
+@app.get("/api/projects/{project_id}/team-state")
+async def get_team_state(project_id: str):
+    """Get team state from .claude/team-state.yaml."""
+    from fastapi import HTTPException
+    import yaml
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    state_file = Path(project["root_path"]) / ".claude" / "team-state.yaml"
+
+    if not state_file.exists():
+        # Return default state if file doesn't exist
+        return {
+            "stage": "init",
+            "mode": "scheduled",
+            "agents": {},
+            "sprint": None,
+            "blockers": []
+        }
+
+    try:
+        state = yaml.safe_load(state_file.read_text())
+        return state
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to parse team state: {e}")
+
+
+# =============================================================================
 # Agent Endpoints (per project)
 # =============================================================================
 

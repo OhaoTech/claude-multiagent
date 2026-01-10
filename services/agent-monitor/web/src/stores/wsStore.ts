@@ -17,17 +17,46 @@ export interface ActivityItem {
   timestamp: number
 }
 
+export interface TeamAgentState {
+  status: 'idle' | 'working' | 'blocked' | 'done' | 'waiting'
+  task: string | null
+  blockers: string[]
+  last_update: string | null
+}
+
+export interface TeamState {
+  version?: number
+  project?: string
+  stage: 'init' | 'plan' | 'work' | 'review'
+  mode: 'scheduled' | 'burst' | 'throttled'
+  agents: Record<string, TeamAgentState>
+  sprint?: {
+    name: string
+    started?: string | null
+    goals: string[]
+  }
+  blockers: string[]
+  transitions?: Array<{
+    from: string
+    to: string
+    at: string
+  }>
+}
+
 interface WsState {
   connected: boolean
   agentStates: Record<string, AgentState>
   activityFeed: ActivityItem[]
   currentRunningAgent: string | null
+  teamState: TeamState | null
 
   // Actions
   connect: () => void
   disconnect: () => void
   addActivity: (item: Omit<ActivityItem, 'id'>) => void
   updateAgentState: (agent: string, state: Partial<AgentState>) => void
+  fetchTeamState: (projectId: string) => Promise<void>
+  setTeamState: (state: TeamState) => void
 }
 
 const MAX_ACTIVITY_ITEMS = 50
@@ -39,6 +68,7 @@ export const useWsStore = create<WsState>((set, get) => ({
   agentStates: {},
   activityFeed: [],
   currentRunningAgent: null,
+  teamState: null,
 
   connect: () => {
     if (ws && ws.readyState === WebSocket.OPEN) return
@@ -118,6 +148,22 @@ export const useWsStore = create<WsState>((set, get) => ({
       set({ currentRunningAgent: null })
     }
   },
+
+  fetchTeamState: async (projectId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${projectId}/team-state`)
+      if (res.ok) {
+        const data = await res.json()
+        set({ teamState: data })
+      }
+    } catch (err) {
+      console.error('Failed to fetch team state:', err)
+    }
+  },
+
+  setTeamState: (state: TeamState) => {
+    set({ teamState: state })
+  },
 }))
 
 function handleMessage(
@@ -188,6 +234,13 @@ function handleMessage(
         content: data.message || 'Unknown error',
         timestamp: Date.now(),
       })
+      break
+
+    case 'team_state':
+      // Team state update from file watcher
+      if (data.state) {
+        set(() => ({ teamState: data.state }))
+      }
       break
   }
 }
