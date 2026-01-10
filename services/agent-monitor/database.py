@@ -84,12 +84,29 @@ def init_db():
             )
         """)
 
+        # Sprints table for sprint planning
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS sprints (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                goal TEXT,
+                status TEXT DEFAULT 'planning',
+                start_date TEXT,
+                end_date TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            )
+        """)
+
         # Tasks table for task queue
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS tasks (
                 id TEXT PRIMARY KEY,
                 project_id TEXT NOT NULL,
                 agent_id TEXT,
+                sprint_id TEXT,
                 title TEXT NOT NULL,
                 description TEXT,
                 status TEXT DEFAULT 'pending',
@@ -104,7 +121,8 @@ def init_db():
                 result TEXT,
                 error TEXT,
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
-                FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL
+                FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL,
+                FOREIGN KEY (sprint_id) REFERENCES sprints(id) ON DELETE SET NULL
             )
         """)
 
@@ -420,6 +438,7 @@ def create_task(
     title: str,
     description: Optional[str] = None,
     agent_id: Optional[str] = None,
+    sprint_id: Optional[str] = None,
     priority: int = 1,
     depends_on: Optional[list[str]] = None
 ) -> dict:
@@ -435,12 +454,12 @@ def create_task(
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO tasks (
-                id, project_id, agent_id, title, description, status,
+                id, project_id, agent_id, sprint_id, title, description, status,
                 priority, depends_on, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            task_id, project_id, agent_id, title, description,
+            task_id, project_id, agent_id, sprint_id, title, description,
             status, priority, depends_on_json, now, now
         ))
 
@@ -470,6 +489,7 @@ def list_tasks(
     project_id: str,
     status: Optional[str] = None,
     agent_id: Optional[str] = None,
+    sprint_id: Optional[str] = None,
     order_by: str = "priority DESC, created_at ASC"
 ) -> list[dict]:
     """List tasks for a project with optional filters."""
@@ -486,6 +506,13 @@ def list_tasks(
         if agent_id:
             query += " AND agent_id = ?"
             params.append(agent_id)
+
+        if sprint_id is not None:
+            if sprint_id == "":
+                query += " AND sprint_id IS NULL"
+            else:
+                query += " AND sprint_id = ?"
+                params.append(sprint_id)
 
         query += f" ORDER BY {order_by}"
 
@@ -506,7 +533,7 @@ def list_tasks(
 def update_task(task_id: str, **kwargs) -> Optional[dict]:
     """Update a task."""
     allowed_fields = {
-        "title", "description", "status", "agent_id", "priority",
+        "title", "description", "status", "agent_id", "sprint_id", "priority",
         "retry_count", "max_retries", "depends_on", "started_at",
         "completed_at", "result", "error"
     }
@@ -595,6 +622,116 @@ def get_pending_tasks_for_agent(project_id: str, agent_id: str) -> list[dict]:
             task["depends_on"] = json.loads(task.get("depends_on", "[]"))
             tasks.append(task)
         return tasks
+
+
+# =============================================================================
+# Sprint Operations
+# =============================================================================
+
+def create_sprint(
+    project_id: str,
+    name: str,
+    goal: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> dict:
+    """Create a new sprint."""
+    sprint_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO sprints (
+                id, project_id, name, goal, status, start_date, end_date,
+                created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, 'planning', ?, ?, ?, ?)
+        """, (sprint_id, project_id, name, goal, start_date, end_date, now, now))
+
+    return get_sprint(sprint_id)
+
+
+def get_sprint(sprint_id: str) -> Optional[dict]:
+    """Get a sprint by ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM sprints WHERE id = ?", (sprint_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def list_sprints(project_id: str, status: Optional[str] = None) -> list[dict]:
+    """List all sprints for a project."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        query = "SELECT * FROM sprints WHERE project_id = ?"
+        params = [project_id]
+
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+
+        query += " ORDER BY created_at DESC"
+
+        cursor.execute(query, params)
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def update_sprint(sprint_id: str, **kwargs) -> Optional[dict]:
+    """Update a sprint."""
+    allowed_fields = {"name", "goal", "status", "start_date", "end_date"}
+    updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
+
+    if not updates:
+        return get_sprint(sprint_id)
+
+    updates["updated_at"] = datetime.utcnow().isoformat()
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates.keys())
+    values = list(updates.values()) + [sprint_id]
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE sprints SET {set_clause} WHERE id = ?", values)
+
+    return get_sprint(sprint_id)
+
+
+def delete_sprint(sprint_id: str) -> bool:
+    """Delete a sprint (tasks remain but lose sprint_id)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM sprints WHERE id = ?", (sprint_id,))
+        return cursor.rowcount > 0
+
+
+def get_sprint_stats(sprint_id: str) -> dict:
+    """Get task statistics for a sprint."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT status, COUNT(*) as count
+            FROM tasks
+            WHERE sprint_id = ?
+            GROUP BY status
+        """, (sprint_id,))
+
+        stats = {
+            "pending": 0,
+            "blocked": 0,
+            "running": 0,
+            "completed": 0,
+            "failed": 0,
+            "total": 0
+        }
+
+        for row in cursor.fetchall():
+            stats[row["status"]] = row["count"]
+            stats["total"] += row["count"]
+
+        return stats
 
 
 # Initialize database on import

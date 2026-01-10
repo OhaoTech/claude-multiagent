@@ -28,7 +28,9 @@ from models import (
     AgentCreate, AgentUpdate, AgentResponse,
     SettingsResponse, SettingsUpdate,
     ProjectSettingsResponse, ProjectSettingsUpdate,
-    TaskCreate, TaskUpdate, TaskResponse, TaskAssign, QueueStats, SchedulerStatus
+    TaskCreate, TaskUpdate, TaskResponse, TaskAssign, QueueStats, SchedulerStatus,
+    SprintCreate, SprintUpdate, SprintResponse, SprintStats,
+    UsageAnalytics, ModelUsage, DailyActivity
 )
 from watcher import AgentMailWatcher, SessionWatcher
 from sessions import get_all_sessions, get_sessions_for_agent, get_session_messages
@@ -651,7 +653,8 @@ async def get_team_state(project_id: str):
 async def list_tasks(
     project_id: str,
     status: Optional[str] = None,
-    agent_id: Optional[str] = None
+    agent_id: Optional[str] = None,
+    sprint_id: Optional[str] = None
 ):
     """List tasks for a project with optional filters."""
     from fastapi import HTTPException
@@ -660,7 +663,7 @@ async def list_tasks(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    tasks = db.list_tasks(project_id, status=status, agent_id=agent_id)
+    tasks = db.list_tasks(project_id, status=status, agent_id=agent_id, sprint_id=sprint_id)
     return [TaskResponse(**t) for t in tasks]
 
 
@@ -679,6 +682,12 @@ async def create_task(project_id: str, request: TaskCreate):
         if not agent or agent["project_id"] != project_id:
             raise HTTPException(status_code=400, detail="Invalid agent_id")
 
+    # Validate sprint_id if provided
+    if request.sprint_id:
+        sprint = db.get_sprint(request.sprint_id)
+        if not sprint or sprint["project_id"] != project_id:
+            raise HTTPException(status_code=400, detail="Invalid sprint_id")
+
     # Validate dependencies
     for dep_id in request.depends_on:
         dep_task = db.get_task(dep_id)
@@ -690,6 +699,7 @@ async def create_task(project_id: str, request: TaskCreate):
         title=request.title,
         description=request.description,
         agent_id=request.agent_id,
+        sprint_id=request.sprint_id,
         priority=request.priority,
         depends_on=request.depends_on if request.depends_on else None
     )
@@ -910,6 +920,290 @@ async def stop_scheduler():
         project_id=scheduler.project_id if scheduler else None,
         interval=scheduler.interval if scheduler else 5.0,
         last_run=scheduler.last_run if scheduler else None
+    )
+
+
+# =============================================================================
+# Sprint Planning Endpoints
+# =============================================================================
+
+@app.get("/api/projects/{project_id}/sprints", response_model=list[SprintResponse])
+async def list_sprints(project_id: str, status: Optional[str] = None):
+    """List all sprints for a project."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    sprints = db.list_sprints(project_id, status=status)
+    return [SprintResponse(**s) for s in sprints]
+
+
+@app.post("/api/projects/{project_id}/sprints", response_model=SprintResponse)
+async def create_sprint(project_id: str, request: SprintCreate):
+    """Create a new sprint."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    sprint = db.create_sprint(
+        project_id=project_id,
+        name=request.name,
+        goal=request.goal,
+        start_date=request.start_date,
+        end_date=request.end_date
+    )
+
+    await manager.broadcast({
+        "type": "sprint_created",
+        "data": {"sprint_id": sprint["id"], "name": sprint["name"]}
+    })
+
+    return SprintResponse(**sprint)
+
+
+@app.get("/api/projects/{project_id}/sprints/{sprint_id}", response_model=SprintResponse)
+async def get_sprint(project_id: str, sprint_id: str):
+    """Get a sprint by ID."""
+    from fastapi import HTTPException
+
+    sprint = db.get_sprint(sprint_id)
+    if not sprint or sprint["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Sprint not found")
+
+    return SprintResponse(**sprint)
+
+
+@app.put("/api/projects/{project_id}/sprints/{sprint_id}", response_model=SprintResponse)
+async def update_sprint(project_id: str, sprint_id: str, request: SprintUpdate):
+    """Update a sprint."""
+    from fastapi import HTTPException
+
+    sprint = db.get_sprint(sprint_id)
+    if not sprint or sprint["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Sprint not found")
+
+    updates = request.model_dump(exclude_unset=True)
+    updated_sprint = db.update_sprint(sprint_id, **updates)
+
+    await manager.broadcast({
+        "type": "sprint_updated",
+        "data": {"sprint_id": sprint_id}
+    })
+
+    return SprintResponse(**updated_sprint)
+
+
+@app.delete("/api/projects/{project_id}/sprints/{sprint_id}")
+async def delete_sprint(project_id: str, sprint_id: str):
+    """Delete a sprint (tasks remain but lose sprint assignment)."""
+    from fastapi import HTTPException
+
+    sprint = db.get_sprint(sprint_id)
+    if not sprint or sprint["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Sprint not found")
+
+    db.delete_sprint(sprint_id)
+
+    await manager.broadcast({
+        "type": "sprint_deleted",
+        "data": {"sprint_id": sprint_id}
+    })
+
+    return {"status": "deleted"}
+
+
+@app.get("/api/projects/{project_id}/sprints/{sprint_id}/stats", response_model=SprintStats)
+async def get_sprint_stats(project_id: str, sprint_id: str):
+    """Get task statistics for a sprint."""
+    from fastapi import HTTPException
+
+    sprint = db.get_sprint(sprint_id)
+    if not sprint or sprint["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Sprint not found")
+
+    stats = db.get_sprint_stats(sprint_id)
+
+    # Calculate completion percentage
+    completion = 0.0
+    if stats["total"] > 0:
+        completion = (stats["completed"] / stats["total"]) * 100
+
+    return SprintStats(**stats, completion_percent=round(completion, 1))
+
+
+@app.post("/api/projects/{project_id}/sprints/{sprint_id}/start")
+async def start_sprint(project_id: str, sprint_id: str):
+    """Start a sprint (set status to active)."""
+    from fastapi import HTTPException
+    from datetime import datetime
+
+    sprint = db.get_sprint(sprint_id)
+    if not sprint or sprint["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Sprint not found")
+
+    if sprint["status"] != "planning":
+        raise HTTPException(status_code=400, detail="Sprint is not in planning status")
+
+    db.update_sprint(sprint_id, status="active", start_date=datetime.utcnow().isoformat())
+
+    await manager.broadcast({
+        "type": "sprint_started",
+        "data": {"sprint_id": sprint_id}
+    })
+
+    return {"status": "started"}
+
+
+@app.post("/api/projects/{project_id}/sprints/{sprint_id}/complete")
+async def complete_sprint(project_id: str, sprint_id: str):
+    """Complete a sprint."""
+    from fastapi import HTTPException
+    from datetime import datetime
+
+    sprint = db.get_sprint(sprint_id)
+    if not sprint or sprint["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Sprint not found")
+
+    if sprint["status"] != "active":
+        raise HTTPException(status_code=400, detail="Sprint is not active")
+
+    db.update_sprint(sprint_id, status="completed", end_date=datetime.utcnow().isoformat())
+
+    await manager.broadcast({
+        "type": "sprint_completed",
+        "data": {"sprint_id": sprint_id}
+    })
+
+    return {"status": "completed"}
+
+
+# =============================================================================
+# Usage Analytics Endpoints
+# =============================================================================
+
+# Model pricing (per 1M tokens) - based on Anthropic API pricing
+MODEL_PRICING = {
+    "claude-opus-4-5-20251101": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.5,
+        "cache_creation": 18.75,
+    },
+    "claude-sonnet-4-5-20250929": {
+        "input": 3.0,
+        "output": 15.0,
+        "cache_read": 0.3,
+        "cache_creation": 3.75,
+    },
+    "claude-opus-4-1-20250805": {
+        "input": 15.0,
+        "output": 75.0,
+        "cache_read": 1.5,
+        "cache_creation": 18.75,
+    },
+}
+
+
+def calculate_model_cost(model_id: str, usage: dict) -> float:
+    """Calculate estimated cost for a model's usage."""
+    pricing = MODEL_PRICING.get(model_id)
+    if not pricing:
+        # Default to Opus pricing for unknown models
+        pricing = MODEL_PRICING["claude-opus-4-5-20251101"]
+
+    input_cost = (usage.get("inputTokens", 0) / 1_000_000) * pricing["input"]
+    output_cost = (usage.get("outputTokens", 0) / 1_000_000) * pricing["output"]
+    cache_read_cost = (usage.get("cacheReadInputTokens", 0) / 1_000_000) * pricing["cache_read"]
+    cache_creation_cost = (usage.get("cacheCreationInputTokens", 0) / 1_000_000) * pricing["cache_creation"]
+
+    return input_cost + output_cost + cache_read_cost + cache_creation_cost
+
+
+@app.get("/api/usage", response_model=UsageAnalytics)
+async def get_usage_analytics(days: int = 30):
+    """Get Claude Code usage analytics from stats-cache.json.
+
+    Args:
+        days: Number of days to include in daily activity (default 30)
+    """
+    from datetime import datetime, timedelta
+
+    stats_file = Path.home() / ".claude" / "stats-cache.json"
+
+    if not stats_file.exists():
+        return UsageAnalytics(
+            total_sessions=0,
+            total_messages=0,
+            models=[],
+            daily_activity=[],
+            total_estimated_cost_usd=0.0,
+            period_days=days
+        )
+
+    try:
+        stats = json.loads(stats_file.read_text())
+    except Exception:
+        return UsageAnalytics(
+            total_sessions=0,
+            total_messages=0,
+            models=[],
+            daily_activity=[],
+            total_estimated_cost_usd=0.0,
+            period_days=days
+        )
+
+    # Parse model usage
+    models = []
+    total_cost = 0.0
+    model_usage = stats.get("modelUsage", {})
+
+    for model_id, usage in model_usage.items():
+        cost = calculate_model_cost(model_id, usage)
+        total_cost += cost
+
+        models.append(ModelUsage(
+            model_id=model_id,
+            input_tokens=usage.get("inputTokens", 0),
+            output_tokens=usage.get("outputTokens", 0),
+            cache_read_tokens=usage.get("cacheReadInputTokens", 0),
+            cache_creation_tokens=usage.get("cacheCreationInputTokens", 0),
+            estimated_cost_usd=round(cost, 2)
+        ))
+
+    # Parse daily activity (last N days)
+    daily_activity = []
+    cutoff_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    # Build a lookup for token data by date
+    token_by_date = {}
+    for entry in stats.get("dailyModelTokens", []):
+        token_by_date[entry["date"]] = entry.get("tokensByModel", {})
+
+    for entry in stats.get("dailyActivity", []):
+        if entry["date"] >= cutoff_date:
+            daily_activity.append(DailyActivity(
+                date=entry["date"],
+                message_count=entry.get("messageCount", 0),
+                session_count=entry.get("sessionCount", 0),
+                tool_call_count=entry.get("toolCallCount", 0),
+                tokens_by_model=token_by_date.get(entry["date"], {})
+            ))
+
+    # Sort by date descending
+    daily_activity.sort(key=lambda x: x.date, reverse=True)
+
+    return UsageAnalytics(
+        total_sessions=stats.get("totalSessions", 0),
+        total_messages=stats.get("totalMessages", 0),
+        first_session_date=stats.get("firstSessionDate"),
+        models=models,
+        daily_activity=daily_activity,
+        total_estimated_cost_usd=round(total_cost, 2),
+        period_days=days
     )
 
 

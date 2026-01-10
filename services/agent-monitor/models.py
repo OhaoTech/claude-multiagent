@@ -231,6 +231,7 @@ class TaskCreate(BaseModel):
     title: str
     description: Optional[str] = None
     agent_id: Optional[str] = None  # Pre-assign to agent
+    sprint_id: Optional[str] = None  # Assign to sprint
     priority: int = 1  # 0=low, 1=normal, 2=high, 3=urgent
     depends_on: list[str] = []  # Task IDs this task depends on
 
@@ -240,6 +241,7 @@ class TaskUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
     agent_id: Optional[str] = None
+    sprint_id: Optional[str] = None
     priority: Optional[int] = None
     status: Optional[Literal["pending", "blocked", "assigned", "running", "completed", "failed"]] = None
     depends_on: Optional[list[str]] = None
@@ -250,6 +252,7 @@ class TaskResponse(BaseModel):
     id: str
     project_id: str
     agent_id: Optional[str]
+    sprint_id: Optional[str] = None
     title: str
     description: Optional[str]
     status: str
@@ -287,3 +290,82 @@ class SchedulerStatus(BaseModel):
     project_id: Optional[str]
     interval: float
     last_run: Optional[str] = None
+
+
+# =============================================================================
+# Sprint Planning Models
+# =============================================================================
+
+class SprintCreate(BaseModel):
+    """Request to create a new sprint."""
+    name: str
+    goal: Optional[str] = None
+    start_date: Optional[str] = None  # ISO date string
+    end_date: Optional[str] = None
+
+
+class SprintUpdate(BaseModel):
+    """Request to update a sprint."""
+    name: Optional[str] = None
+    goal: Optional[str] = None
+    status: Optional[Literal["planning", "active", "completed", "cancelled"]] = None
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+class SprintResponse(BaseModel):
+    """Sprint response model."""
+    id: str
+    project_id: str
+    name: str
+    goal: Optional[str]
+    status: str
+    start_date: Optional[str]
+    end_date: Optional[str]
+    created_at: str
+    updated_at: str
+
+
+class SprintStats(BaseModel):
+    """Sprint statistics."""
+    pending: int
+    blocked: int
+    running: int
+    completed: int
+    failed: int
+    total: int
+    completion_percent: float = 0.0
+
+
+# =============================================================================
+# Usage Analytics Models
+# =============================================================================
+
+class ModelUsage(BaseModel):
+    """Usage stats for a specific model."""
+    model_id: str
+    input_tokens: int
+    output_tokens: int
+    cache_read_tokens: int
+    cache_creation_tokens: int
+    estimated_cost_usd: float
+
+
+class DailyActivity(BaseModel):
+    """Activity stats for a specific day."""
+    date: str
+    message_count: int
+    session_count: int
+    tool_call_count: int
+    tokens_by_model: dict[str, int] = {}
+
+
+class UsageAnalytics(BaseModel):
+    """Complete usage analytics response."""
+    total_sessions: int
+    total_messages: int
+    first_session_date: Optional[str] = None
+    models: list[ModelUsage]
+    daily_activity: list[DailyActivity]
+    total_estimated_cost_usd: float
+    period_days: int

@@ -15,7 +15,11 @@ import {
   Loader2,
   ArrowUpCircle,
   Link2,
+  FileText,
+  DollarSign,
+  ExternalLink,
 } from 'lucide-react'
+import { useChatStore } from '../../stores/chatStore'
 import { useTaskStore, type Task } from '../../stores/taskStore'
 import { useProjectStore } from '../../stores/projectStore'
 
@@ -358,6 +362,24 @@ function TaskItem({ task, expanded, onToggle, onDelete, onRetry, onCancel, agent
             )}
           </div>
 
+          {/* Running indicator */}
+          {task.status === 'running' && task.started_at && (
+            <div className="mt-3 p-2 bg-green-900/20 rounded border border-green-800/50">
+              <div className="flex items-center gap-2 text-xs text-green-300">
+                <Loader2 size={12} className="animate-spin" />
+                <span>In progress...</span>
+                <span className="text-[var(--text-secondary)]">
+                  ({Math.round((Date.now() - new Date(task.started_at).getTime()) / 1000)}s)
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Result output */}
+          {task.result && (
+            <TaskResult result={task.result} />
+          )}
+
           {/* Actions */}
           <div className="flex items-center gap-2 mt-3">
             {task.status === 'failed' && (
@@ -554,6 +576,109 @@ function AddTaskModal({ agents, tasks, onClose, onCreate }: AddTaskModalProps) {
           </div>
         </form>
       </div>
+    </div>
+  )
+}
+
+// Rich task result display
+function TaskResult({ result }: { result: Record<string, unknown> }) {
+  const { loadSession } = useChatStore()
+  const r = result as {
+    summary?: string
+    files_changed?: string[]
+    session_id?: string
+    cost_usd?: number
+    duration_ms?: number
+    num_turns?: number
+    status?: string
+    needs?: string[]
+    file?: string
+    output?: string
+  }
+
+  // If it's just a simple output string
+  if (r.output && !r.summary && !r.session_id) {
+    return (
+      <div className="mt-3 p-2 bg-[var(--bg-primary)] rounded border border-[var(--border)]">
+        <div className="text-xs text-[var(--text-secondary)] mb-1">Output:</div>
+        <pre className="text-xs text-green-300 whitespace-pre-wrap break-words max-h-40 overflow-y-auto">
+          {r.output}
+        </pre>
+      </div>
+    )
+  }
+
+  const handleViewSession = () => {
+    if (r.session_id) {
+      loadSession(r.session_id)
+    }
+  }
+
+  return (
+    <div className="mt-3 space-y-2">
+      {/* Summary */}
+      {r.summary && (
+        <div className="p-2 bg-[var(--bg-primary)] rounded border border-[var(--border)]">
+          <div className="text-xs text-[var(--text-secondary)] mb-1 flex items-center gap-1">
+            <FileText size={10} />
+            Summary
+          </div>
+          <div className="text-xs text-[var(--text-primary)] whitespace-pre-wrap">
+            {r.summary}
+          </div>
+        </div>
+      )}
+
+      {/* Files changed */}
+      {r.files_changed && r.files_changed.length > 0 && (
+        <div className="p-2 bg-[var(--bg-primary)] rounded border border-[var(--border)]">
+          <div className="text-xs text-[var(--text-secondary)] mb-1">
+            Files changed ({r.files_changed.length})
+          </div>
+          <div className="text-xs font-mono text-blue-300 max-h-24 overflow-y-auto">
+            {r.files_changed.map((file, i) => (
+              <div key={i} className="truncate">{file}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Stats row */}
+      <div className="flex flex-wrap items-center gap-3 text-xs">
+        {r.duration_ms && (
+          <span className="text-[var(--text-secondary)]">
+            <Clock size={10} className="inline mr-1" />
+            {Math.round(r.duration_ms / 1000)}s
+          </span>
+        )}
+        {r.num_turns && (
+          <span className="text-[var(--text-secondary)]">
+            {r.num_turns} turns
+          </span>
+        )}
+        {r.cost_usd && (
+          <span className="text-green-400">
+            <DollarSign size={10} className="inline" />
+            {r.cost_usd.toFixed(2)}
+          </span>
+        )}
+        {r.session_id && (
+          <button
+            onClick={handleViewSession}
+            className="flex items-center gap-1 text-[var(--accent)] hover:underline"
+          >
+            <ExternalLink size={10} />
+            View session
+          </button>
+        )}
+      </div>
+
+      {/* Needs/blockers */}
+      {r.needs && r.needs.length > 0 && (
+        <div className="text-xs text-orange-400">
+          Needs: {r.needs.join(', ')}
+        </div>
+      )}
     </div>
   )
 }

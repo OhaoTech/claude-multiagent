@@ -1,14 +1,16 @@
 import { useState } from 'react'
-import { LayoutGrid, Network, ListTodo } from 'lucide-react'
+import { LayoutGrid, Network, ListTodo, TrendingUp, Target } from 'lucide-react'
 import { AgentGrid } from './AgentGrid'
 import { TeamNetworkView } from './TeamNetworkView'
 import { TaskQueue } from './TaskQueue'
+import { UsageAnalytics } from './UsageAnalytics'
+import { SprintPlanning } from './SprintPlanning'
 import { StateBanner } from './StateBanner'
 import { ActivityFeed } from './ActivityFeed'
 import { SessionsList } from './SessionsList'
 import { useChatStore } from '../../stores/chatStore'
 
-type ViewMode = 'grid' | 'network' | 'queue'
+type ViewMode = 'grid' | 'network' | 'queue' | 'sprints' | 'usage'
 
 export function MonitorView() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
@@ -70,6 +72,30 @@ export function MonitorView() {
             <ListTodo size={14} />
             Queue
           </button>
+          <button
+            onClick={() => setViewMode('sprints')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+              viewMode === 'sprints'
+                ? 'bg-[var(--accent)] text-white'
+                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
+            }`}
+            title="Sprint Planning"
+          >
+            <Target size={14} />
+            Sprints
+          </button>
+          <button
+            onClick={() => setViewMode('usage')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+              viewMode === 'usage'
+                ? 'bg-[var(--accent)] text-white'
+                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
+            }`}
+            title="Usage Analytics"
+          >
+            <TrendingUp size={14} />
+            Usage
+          </button>
         </div>
       </div>
 
@@ -113,6 +139,14 @@ export function MonitorView() {
 
         {viewMode === 'queue' && (
           <TaskQueue />
+        )}
+
+        {viewMode === 'sprints' && (
+          <SprintPlanning />
+        )}
+
+        {viewMode === 'usage' && (
+          <UsageAnalytics />
         )}
       </div>
     </div>

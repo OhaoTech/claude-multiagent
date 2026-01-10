@@ -6,11 +6,13 @@ Respects work modes from team-state.yaml.
 
 import asyncio
 import json
+import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Callable, Optional
 
+import frontmatter
 import yaml
 
 import database as db
@@ -217,13 +219,18 @@ class TaskScheduler:
         """Dispatch a task to an agent."""
         now = datetime.utcnow().isoformat()
 
-        # Update task status
+        # Update task status in DB
         db.update_task(
             task["id"],
             status="running",
             agent_id=agent["id"],
             started_at=now
         )
+
+        # Also update the task dict in memory so _read_agent_result can find it
+        task["agent_id"] = agent["id"]
+        task["status"] = "running"
+        task["started_at"] = now
 
         # Broadcast task started
         if self.broadcast:
@@ -296,11 +303,14 @@ class TaskScheduler:
         """Handle successful task completion."""
         now = datetime.utcnow().isoformat()
 
+        # Try to read the actual result from .agent-mail/results/
+        result = self._read_agent_result(task)
+
         db.update_task(
             task["id"],
             status="completed",
             completed_at=now,
-            result={"output": output[:1000]}  # Truncate output
+            result=result
         )
 
         if self.broadcast:
@@ -308,6 +318,73 @@ class TaskScheduler:
                 "type": "task_completed",
                 "data": {"task_id": task["id"]}
             })
+
+    def _read_agent_result(self, task: dict) -> dict:
+        """Read the latest result files for the task's agent."""
+        agent_id = task.get("agent_id")
+        if not agent_id:
+            return {"output": "No agent assigned"}
+
+        # Get agent name from ID
+        agent = db.get_agent(agent_id)
+        if not agent:
+            return {"output": "Agent not found"}
+
+        agent_name = agent["name"]
+        results_dir = self.project_root / ".agent-mail" / "results" / agent_name
+
+        if not results_dir.exists():
+            return {"output": "No results directory"}
+
+        # Find the latest result files (by timestamp in filename)
+        result_files = sorted(results_dir.glob("*-result.md"), reverse=True)
+        output_files = sorted(results_dir.glob("*-output.json"), reverse=True)
+
+        result = {}
+
+        # Parse the latest result.md
+        if result_files:
+            try:
+                result_path = result_files[0]
+                content = result_path.read_text()
+                post = frontmatter.loads(content)
+
+                # Extract metadata
+                result["status"] = post.get("status", "unknown")
+                result["needs"] = post.get("needs", [])
+                result["file"] = result_path.name
+
+                # Extract summary
+                if "## Summary" in post.content:
+                    match = re.search(r"## Summary\s*\n(.*?)(?=\n##|\Z)", post.content, re.DOTALL)
+                    if match:
+                        result["summary"] = match.group(1).strip()[:500]
+
+                # Extract files changed
+                if "## Files Changed" in post.content:
+                    match = re.search(r"## Files Changed\s*\n(.*?)(?=\n##|\Z)", post.content, re.DOTALL)
+                    if match:
+                        result["files_changed"] = [
+                            line.strip().lstrip("- ")
+                            for line in match.group(1).strip().split("\n")
+                            if line.strip()
+                        ][:20]
+            except Exception as e:
+                result["parse_error"] = str(e)
+
+        # Parse the latest output.json for session_id and cost
+        if output_files:
+            try:
+                output_path = output_files[0]
+                data = json.loads(output_path.read_text())
+                result["session_id"] = data.get("session_id")
+                result["cost_usd"] = data.get("total_cost_usd")
+                result["duration_ms"] = data.get("duration_ms")
+                result["num_turns"] = data.get("num_turns")
+            except Exception as e:
+                result["output_parse_error"] = str(e)
+
+        return result if result else {"output": "No result files found"}
 
     async def _handle_task_failure(self, task: dict, error: str):
         """Handle task failure with retry logic."""
