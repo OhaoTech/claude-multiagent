@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Agent Monitor</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --bg-secondary: #161b22;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --success: #3fb950;
+            --error: #f85149;
+            --warning: #d29922;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 12px;
+        }
+
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--error);
+        }
+
+        .status-dot.connected {
+            background: var(--success);
+        }
+
+        /* Current State Banner */
+        .state-banner {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 16px;
+        }
+
+        .state-banner.running {
+            border-color: var(--accent);
+        }
+
+        .state-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 4px;
+        }
+
+        .state-agent {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--accent);
+        }
+
+        .state-task {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-top: 4px;
+            word-break: break-word;
+        }
+
+        .state-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-top: 8px;
+        }
+
+        /* Agent Grid */
+        .agents-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        .agent-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 10px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .agent-card:hover {
+            border-color: var(--accent);
+        }
+
+        .agent-card.active {
+            border-color: var(--accent);
+            background: rgba(88, 166, 255, 0.1);
+        }
+
+        .agent-card.success {
+            border-left: 3px solid var(--success);
+        }
+
+        .agent-card.failed {
+            border-left: 3px solid var(--error);
+        }
+
+        .agent-card.leader {
+            border: 2px solid var(--accent);
+            background: rgba(88, 166, 255, 0.05);
+        }
+
+        .agent-card.leader .agent-name::before {
+            content: "";
+            margin-right: 4px;
+        }
+
+        .agent-name {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+
+        .agent-domain {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .agent-stats {
+            font-size: 10px;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        .agent-card .chat-hint {
+            font-size: 10px;
+            color: var(--accent);
+            margin-top: 4px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .agent-card:hover .chat-hint {
+            opacity: 1;
+        }
+
+        /* Activity Feed */
+        .activity-section {
+            margin-bottom: 16px;
+        }
+
+        .section-header {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .activity-feed {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .activity-item {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            font-size: 13px;
+        }
+
+        .activity-item:last-child {
+            border-bottom: none;
+        }
+
+        .activity-time {
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+
+        .activity-type {
+            display: inline-block;
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            margin-right: 6px;
+        }
+
+        .activity-type.state { background: rgba(88, 166, 255, 0.2); color: var(--accent); }
+        .activity-type.result { background: rgba(63, 185, 80, 0.2); color: var(--success); }
+        .activity-type.output { background: rgba(139, 148, 158, 0.2); color: var(--text-muted); }
+        .activity-type.command { background: rgba(210, 153, 34, 0.2); color: var(--warning); }
+
+        .activity-content {
+            margin-top: 4px;
+            color: var(--text-muted);
+            word-break: break-word;
+        }
+
+        /* Command Input */
+        .command-section {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--bg-secondary);
+            border-top: 1px solid var(--border);
+            padding: 12px;
+        }
+
+        .command-row {
+            display: flex;
+            gap: 8px;
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .agent-select {
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            padding: 8px 12px;
+            font-size: 14px;
+            min-width: 100px;
+        }
+
+        .command-input {
+            flex: 1;
+            background: var(--bg);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            padding: 8px 12px;
+            font-size: 14px;
+        }
+
+        .command-input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        .send-btn {
+            background: var(--accent);
+            border: none;
+            border-radius: 6px;
+            color: white;
+            padding: 8px 16px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Bottom padding for fixed input */
+        .content {
+            padding-bottom: 80px;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+
+        /* New chat button */
+        .new-chat-btn {
+            background: var(--accent);
+            color: white;
+            padding: 6px 12px;
+            border-radius: 6px;
+            text-decoration: none;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .new-chat-btn:hover {
+            opacity: 0.9;
+        }
+
+        /* Streaming response area */
+        .chat-response {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            margin-bottom: 16px;
+            display: none;
+        }
+
+        .chat-response.active {
+            display: block;
+            border-color: var(--accent);
+        }
+
+        .chat-response-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .chat-response-title {
+            font-size: 12px;
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .chat-response-stop {
+            background: var(--error);
+            border: none;
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            cursor: pointer;
+        }
+
+        .chat-response-content {
+            font-size: 13px;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .chat-response-tool {
+            background: var(--bg);
+            padding: 6px 8px;
+            margin: 6px 0;
+            border-left: 2px solid var(--accent);
+            font-size: 11px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <div class="content">
+        <div class="header">
+            <h1>Agent Monitor</h1>
+            <div class="connection-status">
+                <div class="status-dot" id="connectionDot"></div>
+                <span id="connectionText">Connecting...</span>
+            </div>
+            <a href="/chat" class="new-chat-btn">+ New Chat</a>
+        </div>
+
+        <div class="state-banner" id="stateBanner">
+            <div class="state-label">Current Status</div>
+            <div class="state-agent" id="stateAgent">No active agent</div>
+            <div class="state-task" id="stateTask"></div>
+            <div class="state-meta" id="stateMeta"></div>
+        </div>
+
+        <div class="chat-response" id="chatResponse">
+            <div class="chat-response-header">
+                <span class="chat-response-title" id="chatResponseTitle">Streaming response...</span>
+                <button class="chat-response-stop" id="chatStopBtn">Stop</button>
+            </div>
+            <div class="chat-response-content" id="chatResponseContent"></div>
+        </div>
+
+        <div class="agents-grid" id="agentsGrid">
+            <!-- Agent cards populated by JS -->
+        </div>
+
+        <div class="activity-section">
+            <div class="section-header">Activity Feed</div>
+            <div class="activity-feed" id="activityFeed">
+                <div class="empty-state">Waiting for activity...</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="command-section">
+        <div class="command-row">
+            <select class="agent-select" id="agentSelect">
+                <option value="leader">leader</option>
+                <option value="api">api</option>
+                <option value="mobile">mobile</option>
+                <option value="admin">admin</option>
+                <option value="pipeline">pipeline</option>
+                <option value="services">services</option>
+            </select>
+            <input type="text" class="command-input" id="commandInput" placeholder="Send command to agent...">
+            <button class="send-btn" id="sendBtn">Send</button>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

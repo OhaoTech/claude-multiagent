@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Sessions - Agent Monitor</title>
+    <style>
+        :root {
+            --bg: #0d1117;
+            --bg-secondary: #161b22;
+            --border: #30363d;
+            --text: #e6edf3;
+            --text-muted: #8b949e;
+            --accent: #58a6ff;
+            --success: #3fb950;
+            --error: #f85149;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 12px;
+        }
+
+        .header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .back-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 20px;
+            cursor: pointer;
+            padding: 4px 8px;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .agent-badge {
+            background: var(--accent);
+            color: white;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .new-chat-btn {
+            margin-left: auto;
+            background: var(--accent);
+            border: none;
+            color: white;
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+
+        .sessions-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .session-card {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 12px;
+            cursor: pointer;
+            transition: border-color 0.2s;
+        }
+
+        .session-card:hover {
+            border-color: var(--accent);
+        }
+
+        .session-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .session-id {
+            font-family: monospace;
+            font-size: 12px;
+            color: var(--accent);
+        }
+
+        .session-time {
+            font-size: 11px;
+            color: var(--text-muted);
+        }
+
+        .session-stats {
+            display: flex;
+            gap: 16px;
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+        }
+
+        .session-preview {
+            font-size: 13px;
+            color: var(--text-muted);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <button class="back-btn" onclick="window.location.href='/'">←</button>
+        <h1>Sessions</h1>
+        <span class="agent-badge" id="agentBadge">leader</span>
+        <button class="new-chat-btn" onclick="startNewChat()">+ New Chat</button>
+    </div>
+
+    <div class="sessions-list" id="sessionsList">
+        <div class="loading">Loading sessions...</div>
+    </div>
+
+    <script>
+        const agentName = window.location.pathname.split('/').pop() || 'leader';
+        document.getElementById('agentBadge').textContent = agentName;
+        document.title = `${agentName} Sessions - Agent Monitor`;
+
+        async function loadSessions() {
+            try {
+                const response = await fetch(`/api/sessions/${agentName}`);
+                const sessions = await response.json();
+                renderSessions(sessions);
+            } catch (e) {
+                console.error('Failed to load sessions:', e);
+                document.getElementById('sessionsList').innerHTML =
+                    '<div class="empty-state">Failed to load sessions</div>';
+            }
+        }
+
+        function renderSessions(sessions) {
+            const container = document.getElementById('sessionsList');
+
+            if (!sessions || sessions.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <p>No sessions found for ${agentName}</p>
+                        <p style="margin-top: 12px;">
+                            <button class="new-chat-btn" onclick="startNewChat()">Start New Chat</button>
+                        </p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = sessions.map(session => {
+                const timeAgo = formatTimeAgo(session.last_timestamp);
+                const cost = session.cost_usd ? `$${session.cost_usd.toFixed(2)}` : '-';
+
+                return `
+                    <div class="session-card" onclick="openSession('${session.session_id}')">
+                        <div class="session-header">
+                            <span class="session-id">${session.session_id.slice(0, 8)}...</span>
+                            <span class="session-time">${timeAgo}</span>
+                        </div>
+                        <div class="session-stats">
+                            <span>${session.message_count} messages</span>
+                            <span>${cost}</span>
+                        </div>
+                        <div class="session-preview">${escapeHtml(session.last_message_preview) || 'No preview'}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function formatTimeAgo(timestamp) {
+            if (!timestamp) return 'Unknown';
+            const seconds = Math.floor(Date.now() / 1000 - timestamp);
+            if (seconds < 60) return 'Just now';
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+            return `${Math.floor(seconds / 86400)}d ago`;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return '';
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function openSession(sessionId) {
+            window.location.href = `/chat/${sessionId}?agent=${agentName}`;
+        }
+
+        function startNewChat() {
+            window.location.href = `/chat?agent=${agentName}`;
+        }
+
+        loadSessions();
+    </script>
+</body>
+</html>

@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Chat - Agent Monitor</title>
+    <link rel="stylesheet" href="/static/chat.css">
+</head>
+<body>
+    <div class="header">
+        <button class="back-btn" id="backBtn">←</button>
+        <h1 id="chatTitle">New Chat</h1>
+        <span class="agent-badge" id="agentBadge">leader</span>
+        <div class="current-mode" id="currentModeBtn" onclick="toggleModeSelector()">
+            <span class="mode-dot" id="modeDot"></span>
+            <span id="modeName">Normal</span>
+        </div>
+        <button class="header-session-btn" id="sessionPickerBtn">Sessions</button>
+    </div>
+
+    <div class="session-picker" id="sessionPicker" style="display: none;">
+        <div class="session-picker-header">
+            <span class="session-picker-title">Select Session to Continue</span>
+            <button class="session-picker-close" id="sessionPickerClose">×</button>
+        </div>
+        <div class="session-list" id="sessionList">
+            <div style="color: var(--text-muted); font-size: 12px;">Loading sessions...</div>
+        </div>
+    </div>
+
+    <!-- Mode Selector -->
+    <div class="mode-selector" id="modeSelector">
+        <div class="mode-selector-header">
+            <span>Select Mode</span>
+            <span onclick="toggleModeSelector()" style="cursor:pointer">×</span>
+        </div>
+        <div class="mode-grid">
+            <div class="mode-option selected" data-mode="normal" onclick="selectMode('normal')">
+                <div class="mode-option-icon">💬</div>
+                <div class="mode-option-name">Normal</div>
+                <div class="mode-option-desc">Ask before changes</div>
+            </div>
+            <div class="mode-option" data-mode="plan" onclick="selectMode('plan')">
+                <div class="mode-option-icon">📋</div>
+                <div class="mode-option-name">Plan</div>
+                <div class="mode-option-desc">Plan before acting</div>
+            </div>
+            <div class="mode-option" data-mode="auto" onclick="selectMode('auto')">
+                <div class="mode-option-icon">⚡</div>
+                <div class="mode-option-name">Auto Edit</div>
+                <div class="mode-option-desc">Auto-apply edits</div>
+            </div>
+            <div class="mode-option danger" data-mode="yolo" onclick="selectMode('yolo')">
+                <div class="mode-option-icon">🔥</div>
+                <div class="mode-option-name">YOLO</div>
+                <div class="mode-option-desc">Skip all prompts</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="messages" id="messages">
+        <div class="empty-state" id="emptyState">
+            <h2>Start a conversation</h2>
+            <p>Send a message to chat with the agent</p>
+        </div>
+    </div>
+
+    <!-- Permission Prompt -->
+    <div class="permission-prompt" id="permissionPrompt">
+        <div class="permission-header">
+            <span class="permission-icon">⚠️</span>
+            <span class="permission-title">Permission Required</span>
+        </div>
+        <div class="permission-text" id="permissionText">
+            <span class="permission-tool" id="permissionTool"></span>
+            <span id="permissionAction"></span>
+        </div>
+        <div class="permission-options" id="permissionOptions"></div>
+        <div class="permission-timeout" id="permissionTimeout">Waiting for response...</div>
+    </div>
+
+    <!-- Command Palette -->
+    <div class="command-palette" id="commandPalette">
+        <div class="command-palette-header">
+            <span>Commands</span>
+            <span id="commandPaletteClose" style="cursor:pointer">×</span>
+        </div>
+        <div class="command-list" id="commandList"></div>
+    </div>
+
+    <div class="input-area">
+        <div class="quick-actions" id="quickActions">
+            <button class="quick-action-btn" onclick="insertCommand('/status')">Status</button>
+            <button class="quick-action-btn" onclick="insertCommand('/git log -5')">Git Log</button>
+            <button class="quick-action-btn" onclick="insertCommand('/clear')">Clear</button>
+            <button class="quick-action-btn" onclick="insertCommand('/cost')">Cost</button>
+            <button class="quick-action-btn" onclick="toggleCommandPalette()">/ More</button>
+        </div>
+        <div class="image-preview-container" id="imagePreviewContainer"></div>
+        <div class="input-row">
+            <input type="file" id="imageInput" accept="image/*" multiple>
+            <button class="attach-btn" id="attachBtn" title="Attach image">+</button>
+            <textarea class="message-input" id="messageInput" placeholder="Type a message or / for commands..." rows="1"></textarea>
+            <button class="send-btn" id="sendBtn">→</button>
+        </div>
+        <div class="status-bar">
+            <span id="lastUpdate">Loading...</span>
+            <span id="messageCount">0 messages</span>
+        </div>
+    </div>
+
+    <script src="/static/chat.js"></script>
+</body>
+</html>

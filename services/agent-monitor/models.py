@@ -1,0 +1,222 @@
+"""Data models for Agent Monitor."""
+
+from datetime import datetime
+from typing import Literal, Optional
+
+from pydantic import BaseModel
+
+
+class AgentState(BaseModel):
+    """Current state of the agent orchestration system."""
+    current: Optional[str] = None
+    last: Optional[str] = None
+    status: Optional[Literal["running", "success", "failed"]] = None
+    task: Optional[str] = None
+    started: Optional[int] = None
+    completed: Optional[int] = None
+    exit_code: Optional[int] = None
+
+
+class AgentResult(BaseModel):
+    """Result from an agent execution."""
+    agent: str
+    status: Literal["success", "failed", "needs-help"]
+    summary: str = ""
+    files_changed: list[str] = []
+    needs: list[str] = []
+    timestamp: int
+    cost_usd: Optional[float] = None
+    duration_ms: Optional[int] = None
+
+
+class AgentInfo(BaseModel):
+    """Information about an agent."""
+    name: str
+    domain: str
+    worktree: str
+    last_result: Optional[AgentResult] = None
+    result_count: int = 0
+
+
+class Command(BaseModel):
+    """Command to send to an agent."""
+    agent: str
+    content: str
+    type: Literal["dispatch", "message"] = "message"
+
+
+class CommandFile(BaseModel):
+    """Command file written to inbox."""
+    id: str
+    agent: str
+    content: str
+    type: str
+    timestamp: int
+    status: Literal["pending", "processed"] = "pending"
+
+
+class WSMessage(BaseModel):
+    """WebSocket message format."""
+    type: Literal["state", "result", "output", "command_ack", "connected", "chat_output", "chat_done"]
+    data: dict
+    timestamp: datetime = datetime.now()
+
+
+class SessionInfo(BaseModel):
+    """Summary info about a Claude Code session."""
+    session_id: str
+    agent_id: str
+    agent: str  # leader, api, mobile, admin, pipeline, services
+    message_count: int
+    first_timestamp: Optional[float] = None
+    last_timestamp: Optional[float] = None
+    cost_usd: float = 0.0
+    last_message_preview: str = ""
+    cwd: str = ""
+
+
+class SessionMessage(BaseModel):
+    """A single message from a session."""
+    type: Literal["user", "assistant", "system", "tool_result", "summary"]
+    content: str
+    timestamp: Optional[float] = None
+    uuid: str = ""
+    model: Optional[str] = None
+    usage: Optional[dict] = None
+
+
+class ChatRequest(BaseModel):
+    """Request to send a chat message."""
+    session_id: Optional[str] = None  # None = new session
+    agent: str = "leader"
+    message: str
+    resume: bool = True  # Whether to resume existing session
+
+
+# =============================================================================
+# New Models for Multi-Project Support
+# =============================================================================
+
+class ProjectCreate(BaseModel):
+    """Request to create a new project."""
+    name: str
+    root_path: str
+    description: str = ""
+
+
+class ProjectUpdate(BaseModel):
+    """Request to update a project."""
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+
+class ProjectResponse(BaseModel):
+    """Project response model."""
+    id: str
+    name: str
+    root_path: str
+    description: str
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+
+class AgentCreate(BaseModel):
+    """Request to create a new agent."""
+    name: str
+    domain: str  # Relative path within project, e.g., "apps/api"
+
+
+class AgentUpdate(BaseModel):
+    """Request to update an agent."""
+    name: Optional[str] = None
+    domain: Optional[str] = None
+    status: Optional[Literal["active", "inactive"]] = None
+
+
+class AgentResponse(BaseModel):
+    """Agent response model."""
+    id: str
+    project_id: str
+    name: str
+    domain: str
+    worktree_path: Optional[str]
+    status: str
+    is_leader: bool
+    created_at: str
+
+
+class SettingsResponse(BaseModel):
+    """Global settings response."""
+    theme: str = "dark"
+    default_mode: str = "normal"
+    editor_font_size: int = 14
+    editor_tab_size: int = 2
+    auto_save: bool = True
+    sidebar_width: int = 220
+    chat_panel_width: int = 300
+    last_project_id: Optional[str] = None
+
+
+class SettingsUpdate(BaseModel):
+    """Request to update global settings."""
+    theme: Optional[str] = None
+    default_mode: Optional[str] = None
+    editor_font_size: Optional[int] = None
+    editor_tab_size: Optional[int] = None
+    auto_save: Optional[bool] = None
+    sidebar_width: Optional[int] = None
+    chat_panel_width: Optional[int] = None
+
+
+class ProjectSettingsResponse(BaseModel):
+    """Project-specific settings response."""
+    default_agent: str = "leader"
+    git_auto_commit: bool = False
+    file_excludes: list[str] = [".git", "node_modules", "__pycache__", ".venv"]
+
+
+class ProjectSettingsUpdate(BaseModel):
+    """Request to update project settings."""
+    default_agent: Optional[str] = None
+    git_auto_commit: Optional[bool] = None
+    file_excludes: Optional[list[str]] = None
+
+
+class FileTreeNode(BaseModel):
+    """File tree node for file explorer."""
+    name: str
+    path: str
+    is_dir: bool
+    children: Optional[list["FileTreeNode"]] = None
+    size: Optional[int] = None
+    modified: Optional[float] = None
+    git_status: Optional[str] = None  # M, A, D, U, ?
+
+
+class FileContent(BaseModel):
+    """File content response."""
+    path: str
+    content: str
+    encoding: str = "utf-8"
+    size: int
+    modified: float
+
+
+class FileWriteRequest(BaseModel):
+    """Request to write file content."""
+    path: str
+    content: str
+
+
+class FileCreateRequest(BaseModel):
+    """Request to create a file or folder."""
+    path: str
+    is_dir: bool = False
+    content: str = ""
+
+
+class FileRenameRequest(BaseModel):
+    """Request to rename/move a file."""
+    old_path: str
+    new_path: str
