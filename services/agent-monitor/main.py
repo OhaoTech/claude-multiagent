@@ -31,6 +31,7 @@ from models import (
     TaskCreate, TaskUpdate, TaskResponse, TaskAssign, QueueStats, SchedulerStatus,
     TaskTemplateCreate, TaskTemplateUpdate, TaskTemplateResponse, CreateFromTemplateRequest,
     SprintCreate, SprintUpdate, SprintResponse, SprintStats,
+    AgentPerformance, TaskHistoryItem,
     UsageAnalytics, ModelUsage, DailyActivity
 )
 from watcher import AgentMailWatcher, SessionWatcher
@@ -1197,6 +1198,34 @@ async def get_sprint_burndown(project_id: str, sprint_id: str):
 async def get_velocity(project_id: str, limit: int = 10):
     """Get velocity data for completed sprints."""
     return db.get_velocity_data(project_id, limit)
+
+
+# =============================================================================
+# Agent Performance Endpoints
+# =============================================================================
+
+@app.get("/api/projects/{project_id}/performance", response_model=list[AgentPerformance])
+async def get_agent_performance(project_id: str):
+    """Get performance metrics for all agents in a project."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    return db.get_agent_performance(project_id)
+
+
+@app.get("/api/projects/{project_id}/agents/{agent_id}/history", response_model=list[TaskHistoryItem])
+async def get_agent_task_history(project_id: str, agent_id: str, limit: int = 20):
+    """Get recent task history for an agent."""
+    from fastapi import HTTPException
+
+    agent = db.get_agent(agent_id)
+    if not agent or agent["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    return db.get_agent_task_history(agent_id, limit)
 
 
 # =============================================================================

@@ -1,16 +1,17 @@
 import { useState } from 'react'
-import { LayoutGrid, Network, ListTodo, TrendingUp, Target } from 'lucide-react'
+import { LayoutGrid, Network, ListTodo, TrendingUp, Target, BarChart3 } from 'lucide-react'
 import { AgentGrid } from './AgentGrid'
 import { TeamNetworkView } from './TeamNetworkView'
 import { TaskQueue } from './TaskQueue'
 import { UsageAnalytics } from './UsageAnalytics'
 import { SprintPlanning } from './SprintPlanning'
+import { AgentPerformance } from './AgentPerformance'
 import { StateBanner } from './StateBanner'
 import { ActivityFeed } from './ActivityFeed'
 import { SessionsList } from './SessionsList'
 import { useChatStore } from '../../stores/chatStore'
 
-type ViewMode = 'grid' | 'network' | 'queue' | 'sprints' | 'usage'
+type ViewMode = 'grid' | 'network' | 'queue' | 'sprints' | 'performance' | 'usage'
 
 export function MonitorView() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
@@ -85,6 +86,18 @@ export function MonitorView() {
             Sprints
           </button>
           <button
+            onClick={() => setViewMode('performance')}
+            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+              viewMode === 'performance'
+                ? 'bg-[var(--accent)] text-white'
+                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
+            }`}
+            title="Agent Performance"
+          >
+            <BarChart3 size={14} />
+            Perf
+          </button>
+          <button
             onClick={() => setViewMode('usage')}
             className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
               viewMode === 'usage'
@@ -143,6 +156,10 @@ export function MonitorView() {
 
         {viewMode === 'sprints' && (
           <SprintPlanning />
+        )}
+
+        {viewMode === 'performance' && (
+          <AgentPerformance />
         )}
 
         {viewMode === 'usage' && (

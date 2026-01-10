@@ -967,5 +967,77 @@ def create_task_from_template(
     )
 
 
+# =============================================================================
+# Agent Performance Metrics
+# =============================================================================
+
+def get_agent_performance(project_id: str) -> list[dict]:
+    """Get performance metrics for all agents in a project."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        # Get all agents for the project
+        cursor.execute("""
+            SELECT
+                a.id,
+                a.name,
+                a.domain,
+                a.status,
+                COUNT(t.id) as total_tasks,
+                SUM(CASE WHEN t.status = 'completed' THEN 1 ELSE 0 END) as completed_tasks,
+                SUM(CASE WHEN t.status = 'failed' THEN 1 ELSE 0 END) as failed_tasks,
+                SUM(CASE WHEN t.status = 'running' THEN 1 ELSE 0 END) as running_tasks,
+                AVG(
+                    CASE WHEN t.completed_at IS NOT NULL AND t.started_at IS NOT NULL
+                    THEN (julianday(t.completed_at) - julianday(t.started_at)) * 24 * 60
+                    ELSE NULL END
+                ) as avg_duration_minutes
+            FROM agents a
+            LEFT JOIN tasks t ON t.agent_id = a.id
+            WHERE a.project_id = ?
+            GROUP BY a.id
+            ORDER BY completed_tasks DESC
+        """, (project_id,))
+
+        results = []
+        for row in cursor.fetchall():
+            total = row["total_tasks"] or 0
+            completed = row["completed_tasks"] or 0
+            failed = row["failed_tasks"] or 0
+            running = row["running_tasks"] or 0
+
+            success_rate = (completed / total * 100) if total > 0 else 0
+
+            results.append({
+                "agent_id": row["id"],
+                "agent_name": row["name"],
+                "domain": row["domain"],
+                "status": row["status"],
+                "total_tasks": total,
+                "completed_tasks": completed,
+                "failed_tasks": failed,
+                "running_tasks": running,
+                "success_rate": round(success_rate, 1),
+                "avg_duration_minutes": round(row["avg_duration_minutes"] or 0, 1)
+            })
+
+        return results
+
+
+def get_agent_task_history(agent_id: str, limit: int = 20) -> list[dict]:
+    """Get recent task history for an agent."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT id, title, status, priority, started_at, completed_at
+            FROM tasks
+            WHERE agent_id = ?
+            ORDER BY COALESCE(completed_at, updated_at) DESC
+            LIMIT ?
+        """, (agent_id, limit))
+
+        return [dict(row) for row in cursor.fetchall()]
+
+
 # Initialize database on import
 init_db()

@@ -398,6 +398,34 @@ class VelocityPoint(BaseModel):
 
 
 # =============================================================================
+# Agent Performance Models
+# =============================================================================
+
+class AgentPerformance(BaseModel):
+    """Performance metrics for a single agent."""
+    agent_id: str
+    agent_name: str
+    domain: str
+    status: str
+    total_tasks: int
+    completed_tasks: int
+    failed_tasks: int
+    running_tasks: int
+    success_rate: float
+    avg_duration_minutes: float
+
+
+class TaskHistoryItem(BaseModel):
+    """A single task in agent history."""
+    id: str
+    title: str
+    status: str
+    priority: int
+    started_at: Optional[str]
+    completed_at: Optional[str]
+
+
+# =============================================================================
 # Usage Analytics Models
 # =============================================================================
 
