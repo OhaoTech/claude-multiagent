@@ -700,8 +700,12 @@ async def update_project_settings(project_id: str, request: ProjectSettingsUpdat
 # =============================================================================
 
 @app.get("/api/projects/{project_id}/modules")
-async def list_project_modules(project_id: str):
-    """List subdirectories (modules) within a project for agent domain selection."""
+async def list_project_modules(project_id: str, subpath: str = ""):
+    """List subdirectories (modules) within a project for agent domain selection.
+
+    Args:
+        subpath: Relative path within the project to browse (e.g., "apps" or "apps/api")
+    """
     from fastapi import HTTPException
 
     project = db.get_project(project_id)
@@ -712,20 +716,40 @@ async def list_project_modules(project_id: str):
     if not project_root.exists():
         raise HTTPException(status_code=404, detail="Project path not found")
 
+    # Build the target path
+    if subpath:
+        target_path = project_root / subpath
+        # Security: ensure we don't escape project root
+        try:
+            target_path.resolve().relative_to(project_root.resolve())
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid path")
+    else:
+        target_path = project_root
+
+    if not target_path.exists() or not target_path.is_dir():
+        raise HTTPException(status_code=404, detail="Path not found")
+
     modules = []
     try:
-        for item in sorted(project_root.iterdir(), key=lambda x: x.name.lower()):
+        for item in sorted(target_path.iterdir(), key=lambda x: x.name.lower()):
             # Only show directories, skip hidden ones (starting with .)
             if item.is_dir() and not item.name.startswith('.'):
+                # Calculate relative path from project root
+                rel_path = str(item.relative_to(project_root))
                 modules.append({
                     "name": item.name,
                     "path": str(item),
-                    "relative_path": item.name,
+                    "relative_path": rel_path,
                 })
     except PermissionError:
         pass
 
-    return {"modules": modules, "project_root": str(project_root)}
+    return {
+        "modules": modules,
+        "project_root": str(project_root),
+        "current_path": subpath,
+    }
 
 
 @app.get("/api/files/browse")
