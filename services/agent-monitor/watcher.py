@@ -1,10 +1,11 @@
-"""File system watcher for agent-mail directory."""
+"""File system watcher for agent-mail and session directories."""
 
 import asyncio
 import json
 import re
+import time
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Optional
 
 import frontmatter
 from watchdog.events import FileSystemEventHandler
@@ -132,6 +133,53 @@ class AgentMailHandler(FileSystemEventHandler):
             print(f"Error parsing result file {path}: {e}")
 
 
+class SessionHandler(FileSystemEventHandler):
+    """Handle file system events for Claude session files."""
+
+    def __init__(self, broadcast_callback: Callable):
+        self.broadcast = broadcast_callback
+        self._loop = None
+        self._last_broadcast: dict[str, float] = {}  # Debounce per session
+        self._debounce_ms = 500  # 500ms debounce
+
+    def set_loop(self, loop):
+        """Set the asyncio event loop for callbacks."""
+        self._loop = loop
+
+    def _schedule_broadcast(self, message: dict):
+        """Schedule async broadcast from sync context."""
+        if self._loop:
+            asyncio.run_coroutine_threadsafe(self.broadcast(message), self._loop)
+
+    def on_modified(self, event):
+        if event.is_directory:
+            return
+
+        path = Path(event.src_path)
+
+        # Only watch .jsonl session files
+        if path.suffix == '.jsonl':
+            session_id = path.stem
+            now = time.time() * 1000
+
+            # Debounce - don't broadcast if we just did for this session
+            last = self._last_broadcast.get(session_id, 0)
+            if now - last < self._debounce_ms:
+                return
+
+            self._last_broadcast[session_id] = now
+
+            # Broadcast session update
+            self._schedule_broadcast({
+                "type": "session_update",
+                "data": {
+                    "session_id": session_id,
+                    "path": str(path),
+                    "timestamp": int(now),
+                }
+            })
+
+
 class AgentMailWatcher:
     """Watch the .agent-mail directory for changes."""
 
@@ -146,6 +194,33 @@ class AgentMailWatcher:
         self.observer.schedule(self.handler, str(self.path), recursive=True)
         self.observer.start()
         print(f"Watching: {self.path}")
+
+    def stop(self):
+        """Stop watching."""
+        self.observer.stop()
+        self.observer.join()
+
+
+class SessionWatcher:
+    """Watch Claude session directories for changes."""
+
+    def __init__(self, broadcast_callback: Callable):
+        self.broadcast = broadcast_callback
+        self.handler = SessionHandler(broadcast_callback)
+        self.observer = Observer()
+        self.watched_paths: list[str] = []
+
+    def add_path(self, path: Path):
+        """Add a session directory to watch."""
+        if path.exists() and str(path) not in self.watched_paths:
+            self.observer.schedule(self.handler, str(path), recursive=False)
+            self.watched_paths.append(str(path))
+            print(f"Watching sessions: {path}")
+
+    def start(self, loop):
+        """Start watching."""
+        self.handler.set_loop(loop)
+        self.observer.start()
 
     def stop(self):
         """Stop watching."""

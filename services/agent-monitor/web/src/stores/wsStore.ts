@@ -242,5 +242,15 @@ function handleMessage(
         set(() => ({ teamState: data.state }))
       }
       break
+
+    case 'session_update':
+      // Session file was updated - emit event for chatStore to handle
+      // We use a custom event since chatStore is separate
+      if (data.data?.session_id) {
+        window.dispatchEvent(new CustomEvent('session-file-updated', {
+          detail: { sessionId: data.data.session_id }
+        }))
+      }
+      break
   }
 }

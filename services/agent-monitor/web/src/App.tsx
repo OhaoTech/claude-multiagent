@@ -10,6 +10,7 @@ import { SkillsPanel } from './components/projects/SkillsPanel'
 import { useProjectStore } from './stores/projectStore'
 import { useEditorStore } from './stores/editorStore'
 import { useWsStore } from './stores/wsStore'
+import { useChatStore } from './stores/chatStore'
 import { useIsMobile } from './hooks/useIsMobile'
 
 type AppView = 'dashboard' | 'ide'
@@ -40,6 +41,7 @@ function App() {
   const { fetchProjects, fetchSettings, activeProject, settings, selectProject } = useProjectStore()
   const { fetchFileTree } = useEditorStore()
   const { connect, disconnect } = useWsStore()
+  const { activeSession, restoreSession, isStreaming } = useChatStore()
 
   useEffect(() => {
     // Initialize data
@@ -85,6 +87,21 @@ function App() {
       fetchFileTree(activeProject.root_path)
     }
   }, [activeProject])
+
+  // Listen for session file updates and reload chat
+  useEffect(() => {
+    const handleSessionUpdate = (event: CustomEvent<{ sessionId: string }>) => {
+      // Only reload if it's our active session and we're not streaming
+      if (event.detail.sessionId === activeSession && !isStreaming) {
+        restoreSession()
+      }
+    }
+
+    window.addEventListener('session-file-updated', handleSessionUpdate as EventListener)
+    return () => {
+      window.removeEventListener('session-file-updated', handleSessionUpdate as EventListener)
+    }
+  }, [activeSession, restoreSession, isStreaming])
 
   const handleEnterProject = async (projectId: string) => {
     await selectProject(projectId)

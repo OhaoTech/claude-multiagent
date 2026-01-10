@@ -29,7 +29,7 @@ from models import (
     SettingsResponse, SettingsUpdate,
     ProjectSettingsResponse, ProjectSettingsUpdate
 )
-from watcher import AgentMailWatcher
+from watcher import AgentMailWatcher, SessionWatcher
 from sessions import get_all_sessions, get_sessions_for_agent, get_session_messages
 from claude_runner import ClaudeRunner, chat_manager
 import database as db
@@ -169,12 +169,13 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 watcher: Optional[AgentMailWatcher] = None
+session_watcher: Optional[SessionWatcher] = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle."""
-    global watcher
+    global watcher, session_watcher
 
     # Ensure directories exist
     COMMANDS_PATH.mkdir(parents=True, exist_ok=True)
@@ -185,11 +186,26 @@ async def lifespan(app: FastAPI):
     watcher = AgentMailWatcher(AGENT_MAIL_PATH, manager.broadcast)
     watcher.start(loop)
 
+    # Start session watcher
+    session_watcher = SessionWatcher(manager.broadcast)
+
+    # Add Claude session directories to watch
+    # Sessions are stored at ~/.claude/projects/{project-path-hash}/
+    claude_projects_dir = Path.home() / ".claude" / "projects"
+    if claude_projects_dir.exists():
+        for project_dir in claude_projects_dir.iterdir():
+            if project_dir.is_dir():
+                session_watcher.add_path(project_dir)
+
+    session_watcher.start(loop)
+
     yield
 
     # Cleanup
     if watcher:
         watcher.stop()
+    if session_watcher:
+        session_watcher.stop()
 
 
 app = FastAPI(
