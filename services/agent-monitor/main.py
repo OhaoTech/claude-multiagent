@@ -43,7 +43,7 @@ PORT = int(os.environ.get("PORT", 8888))
 
 # Skills directory (bundled with agent-monitor)
 SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
-DEFAULT_SKILLS = ["team-coord", "agent-monitor"]  # Auto-install on project creation
+DEFAULT_SKILLS = ["team-coord", "workflow", "agent-monitor"]  # Auto-install on project creation
 
 # Note: Agents are now managed in the database, not hardcoded here.
 # Use the /api/projects/{id}/sync-worktrees endpoint to import existing git worktrees.
