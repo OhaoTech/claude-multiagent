@@ -220,3 +220,70 @@ class FileRenameRequest(BaseModel):
     """Request to rename/move a file."""
     old_path: str
     new_path: str
+
+
+# =============================================================================
+# Task Queue Models
+# =============================================================================
+
+class TaskCreate(BaseModel):
+    """Request to create a new task."""
+    title: str
+    description: Optional[str] = None
+    agent_id: Optional[str] = None  # Pre-assign to agent
+    priority: int = 1  # 0=low, 1=normal, 2=high, 3=urgent
+    depends_on: list[str] = []  # Task IDs this task depends on
+
+
+class TaskUpdate(BaseModel):
+    """Request to update a task."""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    agent_id: Optional[str] = None
+    priority: Optional[int] = None
+    status: Optional[Literal["pending", "blocked", "assigned", "running", "completed", "failed"]] = None
+    depends_on: Optional[list[str]] = None
+
+
+class TaskResponse(BaseModel):
+    """Task response model."""
+    id: str
+    project_id: str
+    agent_id: Optional[str]
+    title: str
+    description: Optional[str]
+    status: str
+    priority: int
+    retry_count: int
+    max_retries: int
+    depends_on: list[str]
+    created_at: str
+    updated_at: str
+    started_at: Optional[str]
+    completed_at: Optional[str]
+    result: Optional[dict] = None
+    error: Optional[str] = None
+
+
+class TaskAssign(BaseModel):
+    """Request to assign a task to an agent."""
+    agent_id: str
+
+
+class QueueStats(BaseModel):
+    """Task queue statistics."""
+    pending: int
+    blocked: int
+    assigned: int
+    running: int
+    completed: int
+    failed: int
+    total: int
+
+
+class SchedulerStatus(BaseModel):
+    """Scheduler status response."""
+    running: bool
+    project_id: Optional[str]
+    interval: float
+    last_run: Optional[str] = None

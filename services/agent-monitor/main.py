@@ -27,11 +27,13 @@ from models import (
     ProjectCreate, ProjectUpdate, ProjectResponse,
     AgentCreate, AgentUpdate, AgentResponse,
     SettingsResponse, SettingsUpdate,
-    ProjectSettingsResponse, ProjectSettingsUpdate
+    ProjectSettingsResponse, ProjectSettingsUpdate,
+    TaskCreate, TaskUpdate, TaskResponse, TaskAssign, QueueStats, SchedulerStatus
 )
 from watcher import AgentMailWatcher, SessionWatcher
 from sessions import get_all_sessions, get_sessions_for_agent, get_session_messages
 from claude_runner import ClaudeRunner, chat_manager
+from scheduler import TaskScheduler, get_scheduler, set_scheduler
 import database as db
 
 # Configuration
@@ -199,9 +201,26 @@ async def lifespan(app: FastAPI):
 
     session_watcher.start(loop)
 
+    # Initialize scheduler if there's an active project
+    active_project = db.get_active_project()
+    if active_project:
+        scheduler = TaskScheduler(
+            project_id=active_project["id"],
+            project_root=Path(active_project["root_path"]),
+            broadcast_callback=manager.broadcast,
+            interval=5.0
+        )
+        set_scheduler(scheduler)
+        # Don't auto-start - user controls via API
+
     yield
 
     # Cleanup
+    scheduler = get_scheduler()
+    if scheduler and scheduler.is_running:
+        await scheduler.stop()
+    set_scheduler(None)
+
     if watcher:
         watcher.stop()
     if session_watcher:
@@ -622,6 +641,276 @@ async def get_team_state(project_id: str):
         return state
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to parse team state: {e}")
+
+
+# =============================================================================
+# Task Queue Endpoints
+# =============================================================================
+
+@app.get("/api/projects/{project_id}/tasks", response_model=list[TaskResponse])
+async def list_tasks(
+    project_id: str,
+    status: Optional[str] = None,
+    agent_id: Optional[str] = None
+):
+    """List tasks for a project with optional filters."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    tasks = db.list_tasks(project_id, status=status, agent_id=agent_id)
+    return [TaskResponse(**t) for t in tasks]
+
+
+@app.post("/api/projects/{project_id}/tasks", response_model=TaskResponse)
+async def create_task(project_id: str, request: TaskCreate):
+    """Create a new task in the queue."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Validate agent_id if provided
+    if request.agent_id:
+        agent = db.get_agent(request.agent_id)
+        if not agent or agent["project_id"] != project_id:
+            raise HTTPException(status_code=400, detail="Invalid agent_id")
+
+    # Validate dependencies
+    for dep_id in request.depends_on:
+        dep_task = db.get_task(dep_id)
+        if not dep_task or dep_task["project_id"] != project_id:
+            raise HTTPException(status_code=400, detail=f"Invalid dependency: {dep_id}")
+
+    task = db.create_task(
+        project_id=project_id,
+        title=request.title,
+        description=request.description,
+        agent_id=request.agent_id,
+        priority=request.priority,
+        depends_on=request.depends_on if request.depends_on else None
+    )
+
+    # Broadcast task created
+    await manager.broadcast({
+        "type": "task_created",
+        "data": {"task_id": task["id"], "title": task["title"]}
+    })
+
+    return TaskResponse(**task)
+
+
+@app.get("/api/projects/{project_id}/tasks/{task_id}", response_model=TaskResponse)
+async def get_task(project_id: str, task_id: str):
+    """Get a task by ID."""
+    from fastapi import HTTPException
+
+    task = db.get_task(task_id)
+    if not task or task["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    return TaskResponse(**task)
+
+
+@app.put("/api/projects/{project_id}/tasks/{task_id}", response_model=TaskResponse)
+async def update_task(project_id: str, task_id: str, request: TaskUpdate):
+    """Update a task."""
+    from fastapi import HTTPException
+
+    task = db.get_task(task_id)
+    if not task or task["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    updates = request.model_dump(exclude_unset=True)
+
+    # Validate agent_id if provided
+    if "agent_id" in updates and updates["agent_id"]:
+        agent = db.get_agent(updates["agent_id"])
+        if not agent or agent["project_id"] != project_id:
+            raise HTTPException(status_code=400, detail="Invalid agent_id")
+
+    task = db.update_task(task_id, **updates)
+    return TaskResponse(**task)
+
+
+@app.delete("/api/projects/{project_id}/tasks/{task_id}")
+async def delete_task(project_id: str, task_id: str):
+    """Delete a task."""
+    from fastapi import HTTPException
+
+    task = db.get_task(task_id)
+    if not task or task["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    # Can't delete running tasks
+    if task["status"] == "running":
+        raise HTTPException(status_code=400, detail="Cannot delete running task")
+
+    success = db.delete_task(task_id)
+    return {"success": success}
+
+
+@app.post("/api/projects/{project_id}/tasks/{task_id}/assign", response_model=TaskResponse)
+async def assign_task(project_id: str, task_id: str, request: TaskAssign):
+    """Manually assign a task to an agent."""
+    from fastapi import HTTPException
+
+    task = db.get_task(task_id)
+    if not task or task["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task["status"] not in ("pending", "blocked"):
+        raise HTTPException(status_code=400, detail=f"Cannot assign task with status: {task['status']}")
+
+    agent = db.get_agent(request.agent_id)
+    if not agent or agent["project_id"] != project_id:
+        raise HTTPException(status_code=400, detail="Invalid agent_id")
+
+    task = db.update_task(task_id, agent_id=request.agent_id)
+    return TaskResponse(**task)
+
+
+@app.post("/api/projects/{project_id}/tasks/{task_id}/retry", response_model=TaskResponse)
+async def retry_task(project_id: str, task_id: str):
+    """Retry a failed task."""
+    from fastapi import HTTPException
+
+    task = db.get_task(task_id)
+    if not task or task["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task["status"] != "failed":
+        raise HTTPException(status_code=400, detail="Can only retry failed tasks")
+
+    scheduler = get_scheduler()
+    if scheduler:
+        await scheduler.retry_task(task_id)
+    else:
+        # Manual retry without scheduler
+        db.update_task(
+            task_id,
+            status="pending",
+            retry_count=0,
+            agent_id=None,
+            started_at=None,
+            completed_at=None,
+            error=None
+        )
+
+    return TaskResponse(**db.get_task(task_id))
+
+
+@app.post("/api/projects/{project_id}/tasks/{task_id}/cancel")
+async def cancel_task(project_id: str, task_id: str):
+    """Cancel a running task."""
+    from fastapi import HTTPException
+
+    task = db.get_task(task_id)
+    if not task or task["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    if task["status"] != "running":
+        raise HTTPException(status_code=400, detail="Can only cancel running tasks")
+
+    scheduler = get_scheduler()
+    if scheduler:
+        success = await scheduler.cancel_task(task_id)
+    else:
+        # Manual cancel without scheduler
+        from datetime import datetime
+        db.update_task(
+            task_id,
+            status="failed",
+            completed_at=datetime.utcnow().isoformat(),
+            error="Cancelled by user"
+        )
+        success = True
+
+    return {"success": success}
+
+
+@app.get("/api/projects/{project_id}/queue/stats", response_model=QueueStats)
+async def get_queue_stats(project_id: str):
+    """Get task queue statistics."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    stats = db.get_queue_stats(project_id)
+    return QueueStats(**stats)
+
+
+# =============================================================================
+# Scheduler Control Endpoints
+# =============================================================================
+
+@app.get("/api/scheduler/status", response_model=SchedulerStatus)
+async def get_scheduler_status():
+    """Get scheduler status."""
+    scheduler = get_scheduler()
+    if not scheduler:
+        return SchedulerStatus(
+            running=False,
+            project_id=None,
+            interval=5.0
+        )
+
+    return SchedulerStatus(
+        running=scheduler.is_running,
+        project_id=scheduler.project_id,
+        interval=scheduler.interval,
+        last_run=scheduler.last_run
+    )
+
+
+@app.post("/api/scheduler/start", response_model=SchedulerStatus)
+async def start_scheduler():
+    """Start the task scheduler."""
+    from fastapi import HTTPException
+
+    scheduler = get_scheduler()
+    if not scheduler:
+        # Create scheduler for active project
+        active_project = db.get_active_project()
+        if not active_project:
+            raise HTTPException(status_code=400, detail="No active project")
+
+        scheduler = TaskScheduler(
+            project_id=active_project["id"],
+            project_root=Path(active_project["root_path"]),
+            broadcast_callback=manager.broadcast,
+            interval=5.0
+        )
+        set_scheduler(scheduler)
+
+    await scheduler.start()
+
+    return SchedulerStatus(
+        running=scheduler.is_running,
+        project_id=scheduler.project_id,
+        interval=scheduler.interval,
+        last_run=scheduler.last_run
+    )
+
+
+@app.post("/api/scheduler/stop", response_model=SchedulerStatus)
+async def stop_scheduler():
+    """Stop the task scheduler."""
+    scheduler = get_scheduler()
+    if scheduler:
+        await scheduler.stop()
+
+    return SchedulerStatus(
+        running=False,
+        project_id=scheduler.project_id if scheduler else None,
+        interval=scheduler.interval if scheduler else 5.0,
+        last_run=scheduler.last_run if scheduler else None
+    )
 
 
 # =============================================================================

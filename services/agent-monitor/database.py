@@ -84,6 +84,30 @@ def init_db():
             )
         """)
 
+        # Tasks table for task queue
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS tasks (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                agent_id TEXT,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT DEFAULT 'pending',
+                priority INTEGER DEFAULT 1,
+                retry_count INTEGER DEFAULT 0,
+                max_retries INTEGER DEFAULT 2,
+                depends_on TEXT DEFAULT '[]',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                started_at TEXT,
+                completed_at TEXT,
+                result TEXT,
+                error TEXT,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE,
+                FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE SET NULL
+            )
+        """)
+
         # Initialize default global settings if not exist
         default_settings = {
             "theme": "dark",
@@ -385,6 +409,192 @@ def update_project_settings(project_id: str, **kwargs) -> dict:
                 (project_id, key, value)
             )
     return get_project_settings(project_id)
+
+
+# =============================================================================
+# Task Operations
+# =============================================================================
+
+def create_task(
+    project_id: str,
+    title: str,
+    description: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    priority: int = 1,
+    depends_on: Optional[list[str]] = None
+) -> dict:
+    """Create a new task in the queue."""
+    task_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+    depends_on_json = json.dumps(depends_on or [])
+
+    # If task has dependencies, start as blocked
+    status = "blocked" if depends_on else "pending"
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO tasks (
+                id, project_id, agent_id, title, description, status,
+                priority, depends_on, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """, (
+            task_id, project_id, agent_id, title, description,
+            status, priority, depends_on_json, now, now
+        ))
+
+    return get_task(task_id)
+
+
+def get_task(task_id: str) -> Optional[dict]:
+    """Get a task by ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM tasks WHERE id = ?", (task_id,))
+        row = cursor.fetchone()
+        if row:
+            task = dict(row)
+            # Parse JSON fields
+            task["depends_on"] = json.loads(task.get("depends_on", "[]"))
+            if task.get("result"):
+                try:
+                    task["result"] = json.loads(task["result"])
+                except json.JSONDecodeError:
+                    pass
+            return task
+        return None
+
+
+def list_tasks(
+    project_id: str,
+    status: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    order_by: str = "priority DESC, created_at ASC"
+) -> list[dict]:
+    """List tasks for a project with optional filters."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+
+        query = "SELECT * FROM tasks WHERE project_id = ?"
+        params = [project_id]
+
+        if status:
+            query += " AND status = ?"
+            params.append(status)
+
+        if agent_id:
+            query += " AND agent_id = ?"
+            params.append(agent_id)
+
+        query += f" ORDER BY {order_by}"
+
+        cursor.execute(query, params)
+        tasks = []
+        for row in cursor.fetchall():
+            task = dict(row)
+            task["depends_on"] = json.loads(task.get("depends_on", "[]"))
+            if task.get("result"):
+                try:
+                    task["result"] = json.loads(task["result"])
+                except json.JSONDecodeError:
+                    pass
+            tasks.append(task)
+        return tasks
+
+
+def update_task(task_id: str, **kwargs) -> Optional[dict]:
+    """Update a task."""
+    allowed_fields = {
+        "title", "description", "status", "agent_id", "priority",
+        "retry_count", "max_retries", "depends_on", "started_at",
+        "completed_at", "result", "error"
+    }
+    updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
+
+    if not updates:
+        return get_task(task_id)
+
+    updates["updated_at"] = datetime.utcnow().isoformat()
+
+    # Serialize JSON fields
+    if "depends_on" in updates:
+        updates["depends_on"] = json.dumps(updates["depends_on"])
+    if "result" in updates and isinstance(updates["result"], (dict, list)):
+        updates["result"] = json.dumps(updates["result"])
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates.keys())
+    values = list(updates.values()) + [task_id]
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(f"UPDATE tasks SET {set_clause} WHERE id = ?", values)
+
+    return get_task(task_id)
+
+
+def delete_task(task_id: str) -> bool:
+    """Delete a task."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM tasks WHERE id = ?", (task_id,))
+        return cursor.rowcount > 0
+
+
+def get_queue_stats(project_id: str) -> dict:
+    """Get task queue statistics for a project."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT status, COUNT(*) as count
+            FROM tasks
+            WHERE project_id = ?
+            GROUP BY status
+        """, (project_id,))
+
+        stats = {
+            "pending": 0,
+            "blocked": 0,
+            "assigned": 0,
+            "running": 0,
+            "completed": 0,
+            "failed": 0,
+            "total": 0
+        }
+
+        for row in cursor.fetchall():
+            stats[row["status"]] = row["count"]
+            stats["total"] += row["count"]
+
+        return stats
+
+
+def get_blocked_tasks(project_id: str) -> list[dict]:
+    """Get all blocked tasks for dependency checking."""
+    return list_tasks(project_id, status="blocked")
+
+
+def get_pending_tasks_for_agent(project_id: str, agent_id: str) -> list[dict]:
+    """Get pending tasks that can be assigned to a specific agent."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT * FROM tasks
+            WHERE project_id = ?
+            AND status = 'pending'
+            AND (agent_id IS NULL OR agent_id = ?)
+            ORDER BY
+                CASE WHEN agent_id = ? THEN 0 ELSE 1 END,
+                priority DESC,
+                created_at ASC
+        """, (project_id, agent_id, agent_id))
+
+        tasks = []
+        for row in cursor.fetchall():
+            task = dict(row)
+            task["depends_on"] = json.loads(task.get("depends_on", "[]"))
+            tasks.append(task)
+        return tasks
 
 
 # Initialize database on import
