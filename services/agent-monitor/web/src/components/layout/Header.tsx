@@ -1,16 +1,17 @@
-import { Settings, ArrowLeft, Monitor, Code2 } from 'lucide-react'
+import { Settings, ArrowLeft, Monitor, Code2, Package } from 'lucide-react'
 import { useProjectStore } from '../../stores/projectStore'
 import { useWsStore } from '../../stores/wsStore'
 
 interface HeaderProps {
   onSettingsClick: () => void
+  onSkillsClick: () => void
   onBackClick: () => void
   activeTab: 'monitor' | 'editor'
   onTabChange: (tab: 'monitor' | 'editor') => void
   isMobile?: boolean
 }
 
-export function Header({ onSettingsClick, onBackClick, activeTab, onTabChange, isMobile = false }: HeaderProps) {
+export function Header({ onSettingsClick, onSkillsClick, onBackClick, activeTab, onTabChange, isMobile = false }: HeaderProps) {
   const { activeProject, agents } = useProjectStore()
   const { connected } = useWsStore()
 
@@ -78,6 +79,14 @@ export function Header({ onSettingsClick, onBackClick, activeTab, onTabChange, i
             </span>
           )}
         </div>
+
+        <button
+          onClick={onSkillsClick}
+          className="p-1.5 rounded hover:bg-[var(--bg-secondary)] transition-colors"
+          title="Skills"
+        >
+          <Package size={16} />
+        </button>
 
         <button
           onClick={onSettingsClick}

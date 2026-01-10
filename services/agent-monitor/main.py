@@ -41,8 +41,106 @@ COMMANDS_PATH = AGENT_MAIL_PATH / "commands"
 RESULTS_PATH = AGENT_MAIL_PATH / "results"
 PORT = int(os.environ.get("PORT", 8888))
 
+# Skills directory (bundled with agent-monitor)
+SKILLS_DIR = Path(__file__).parent.parent.parent / "skills"
+DEFAULT_SKILLS = ["team-coord", "agent-monitor"]  # Auto-install on project creation
+
 # Note: Agents are now managed in the database, not hardcoded here.
 # Use the /api/projects/{id}/sync-worktrees endpoint to import existing git worktrees.
+
+
+def parse_skill_metadata(skill_path: Path) -> dict:
+    """Parse skill metadata from SKILL.md frontmatter."""
+    skill_md = skill_path / "SKILL.md"
+    if not skill_md.exists():
+        return {"name": skill_path.name, "description": ""}
+
+    content = skill_md.read_text()
+    metadata = {"name": skill_path.name, "description": ""}
+
+    # Parse YAML frontmatter
+    if content.startswith("---"):
+        parts = content.split("---", 2)
+        if len(parts) >= 3:
+            import re
+            frontmatter = parts[1]
+            name_match = re.search(r'^name:\s*(.+)$', frontmatter, re.MULTILINE)
+            desc_match = re.search(r'^description:\s*(.+)$', frontmatter, re.MULTILINE)
+            if name_match:
+                metadata["name"] = name_match.group(1).strip()
+            if desc_match:
+                metadata["description"] = desc_match.group(1).strip()
+
+    return metadata
+
+
+def get_available_skills() -> list[dict]:
+    """Get list of available skills from the bundled skills directory."""
+    skills = []
+    if not SKILLS_DIR.exists():
+        return skills
+
+    for skill_path in sorted(SKILLS_DIR.iterdir()):
+        if skill_path.is_dir() and not skill_path.name.startswith('.'):
+            metadata = parse_skill_metadata(skill_path)
+            skills.append({
+                "id": skill_path.name,
+                "name": metadata["name"],
+                "description": metadata["description"],
+                "path": str(skill_path),
+            })
+
+    return skills
+
+
+def get_installed_skills(project_root: Path) -> list[dict]:
+    """Get list of installed skills for a project."""
+    skills_dir = project_root / ".claude" / "skills"
+    if not skills_dir.exists():
+        return []
+
+    skills = []
+    for skill_path in sorted(skills_dir.iterdir()):
+        if skill_path.is_dir() and not skill_path.name.startswith('.'):
+            metadata = parse_skill_metadata(skill_path)
+            skills.append({
+                "id": skill_path.name,
+                "name": metadata["name"],
+                "description": metadata["description"],
+                "path": str(skill_path),
+            })
+
+    return skills
+
+
+def install_skill(project_root: Path, skill_id: str) -> bool:
+    """Install a skill to a project by copying from bundled skills."""
+    import shutil
+
+    source = SKILLS_DIR / skill_id
+    if not source.exists():
+        return False
+
+    target = project_root / ".claude" / "skills" / skill_id
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    if target.exists():
+        shutil.rmtree(target)
+
+    shutil.copytree(source, target)
+    return True
+
+
+def uninstall_skill(project_root: Path, skill_id: str) -> bool:
+    """Uninstall a skill from a project."""
+    import shutil
+
+    target = project_root / ".claude" / "skills" / skill_id
+    if not target.exists():
+        return False
+
+    shutil.rmtree(target)
+    return True
 
 
 class ConnectionManager:
@@ -337,6 +435,15 @@ async def create_project(request: ProjectCreate):
         raise HTTPException(status_code=400, detail="Project with this path already exists")
 
     project = db.create_project(request.name, request.root_path, request.description)
+
+    # Auto-install default skills
+    project_root = Path(request.root_path)
+    for skill_id in DEFAULT_SKILLS:
+        try:
+            install_skill(project_root, skill_id)
+        except Exception as e:
+            print(f"Warning: Failed to install skill {skill_id}: {e}")
+
     return ProjectResponse(**project)
 
 
@@ -391,6 +498,81 @@ async def select_project(project_id: str):
     RESULTS_PATH.mkdir(parents=True, exist_ok=True)
 
     return ProjectResponse(**project)
+
+
+# =============================================================================
+# Skills Endpoints
+# =============================================================================
+
+@app.get("/api/skills")
+async def list_available_skills():
+    """List all available skills that can be installed."""
+    return {"skills": get_available_skills()}
+
+
+@app.get("/api/projects/{project_id}/skills")
+async def list_project_skills(project_id: str):
+    """List installed skills for a project."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_root = Path(project["root_path"])
+    installed = get_installed_skills(project_root)
+    available = get_available_skills()
+
+    # Mark which available skills are installed
+    installed_ids = {s["id"] for s in installed}
+    for skill in available:
+        skill["installed"] = skill["id"] in installed_ids
+
+    return {
+        "installed": installed,
+        "available": available,
+    }
+
+
+@app.post("/api/projects/{project_id}/skills/{skill_id}")
+async def install_project_skill(project_id: str, skill_id: str):
+    """Install a skill to a project."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # Check if skill exists
+    available = get_available_skills()
+    if not any(s["id"] == skill_id for s in available):
+        raise HTTPException(status_code=404, detail=f"Skill not found: {skill_id}")
+
+    project_root = Path(project["root_path"])
+    success = install_skill(project_root, skill_id)
+
+    if not success:
+        raise HTTPException(status_code=500, detail="Failed to install skill")
+
+    return {"success": True, "skill_id": skill_id}
+
+
+@app.delete("/api/projects/{project_id}/skills/{skill_id}")
+async def uninstall_project_skill(project_id: str, skill_id: str):
+    """Uninstall a skill from a project."""
+    from fastapi import HTTPException
+
+    project = db.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_root = Path(project["root_path"])
+    success = uninstall_skill(project_root, skill_id)
+
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Skill not installed: {skill_id}")
+
+    return {"success": True, "skill_id": skill_id}
 
 
 # =============================================================================

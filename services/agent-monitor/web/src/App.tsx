@@ -6,6 +6,7 @@ import { ChatPanel } from './components/chat/ChatPanel'
 import { ProjectDashboard } from './components/projects/ProjectDashboard'
 import { MonitorView } from './components/monitor/MonitorView'
 import { MobileTabBar, type MobileTab } from './components/layout/MobileTabBar'
+import { SkillsPanel } from './components/projects/SkillsPanel'
 import { useProjectStore } from './stores/projectStore'
 import { useEditorStore } from './stores/editorStore'
 import { useWsStore } from './stores/wsStore'
@@ -31,6 +32,7 @@ function App() {
   })
   const [mobileTab, setMobileTab] = useState<MobileTab>('chat')
   const [showSettings, setShowSettings] = useState(false)
+  const [showSkills, setShowSkills] = useState(false)
   const [initialized, setInitialized] = useState(false)
 
   const isMobile = useIsMobile()
@@ -117,6 +119,7 @@ function App() {
       <div className="fixed inset-0 flex flex-col overflow-hidden">
         <Header
           onSettingsClick={() => setShowSettings(true)}
+          onSkillsClick={() => setShowSkills(true)}
           onBackClick={handleBackToDashboard}
           activeTab={ideTab}
           onTabChange={setIdeTab}
@@ -143,6 +146,9 @@ function App() {
         {showSettings && (
           <SettingsModal onClose={() => setShowSettings(false)} />
         )}
+        {showSkills && (
+          <SkillsPanel onClose={() => setShowSkills(false)} />
+        )}
       </div>
     )
   }
@@ -152,6 +158,7 @@ function App() {
     <div className="h-screen w-screen flex flex-col overflow-hidden">
       <Header
         onSettingsClick={() => setShowSettings(true)}
+        onSkillsClick={() => setShowSkills(true)}
         onBackClick={handleBackToDashboard}
         activeTab={ideTab}
         onTabChange={setIdeTab}
@@ -173,6 +180,11 @@ function App() {
       {/* Settings Modal */}
       {showSettings && (
         <SettingsModal onClose={() => setShowSettings(false)} />
+      )}
+
+      {/* Skills Panel */}
+      {showSkills && (
+        <SkillsPanel onClose={() => setShowSkills(false)} />
       )}
     </div>
   )
