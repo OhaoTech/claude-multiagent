@@ -102,6 +102,7 @@ class ProjectCreate(BaseModel):
     name: str
     root_path: str
     description: str = ""
+    init_git: bool = False  # Initialize git repo if not already one
 
 
 class ProjectUpdate(BaseModel):
@@ -132,6 +133,7 @@ class AgentUpdate(BaseModel):
     name: Optional[str] = None
     domain: Optional[str] = None
     status: Optional[Literal["active", "inactive"]] = None
+    nickname: Optional[str] = None
 
 
 class AgentResponse(BaseModel):
@@ -143,6 +145,7 @@ class AgentResponse(BaseModel):
     worktree_path: Optional[str]
     status: str
     is_leader: bool
+    nickname: Optional[str] = None
     created_at: str
 
 
@@ -156,6 +159,7 @@ class SettingsResponse(BaseModel):
     sidebar_width: int = 220
     chat_panel_width: int = 300
     last_project_id: Optional[str] = None
+    model: str = "sonnet"  # haiku, sonnet, opus
 
 
 class SettingsUpdate(BaseModel):
@@ -167,6 +171,7 @@ class SettingsUpdate(BaseModel):
     auto_save: Optional[bool] = None
     sidebar_width: Optional[int] = None
     chat_panel_width: Optional[int] = None
+    model: Optional[str] = None  # haiku, sonnet, opus
 
 
 class ProjectSettingsResponse(BaseModel):
@@ -290,6 +295,8 @@ class SchedulerStatus(BaseModel):
     project_id: Optional[str]
     interval: float
     last_run: Optional[str] = None
+    paused_for_rate_limit: bool = False
+    rate_limit_reason: Optional[str] = None
 
 
 # =============================================================================

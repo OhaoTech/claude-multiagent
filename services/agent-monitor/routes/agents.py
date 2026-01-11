@@ -168,6 +168,70 @@ async def get_agent_task_history(project_id: str, agent_id: str, limit: int = 20
     return db.get_agent_task_history(agent_id, limit)
 
 
+@router.get("/{agent_id}/git-status")
+async def get_agent_git_status(project_id: str, agent_id: str):
+    """Get git status for an agent's worktree."""
+    agent = db.get_agent(agent_id)
+    if not agent or agent["project_id"] != project_id:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    worktree_path = agent.get("worktree_path")
+    if not worktree_path or not Path(worktree_path).exists():
+        return {"error": "No worktree", "worktree_path": worktree_path}
+
+    try:
+        # Get branch info
+        branch_result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True
+        )
+        branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "HEAD"
+
+        # Get short status
+        status_result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True
+        )
+        status_lines = status_result.stdout.strip().split("\n") if status_result.stdout.strip() else []
+
+        # Count changes
+        modified = len([l for l in status_lines if l and l[0] in "M "])
+        added = len([l for l in status_lines if l and l[0] in "A?"])
+        deleted = len([l for l in status_lines if l and l[0] in "D"])
+        untracked = len([l for l in status_lines if l.startswith("??")])
+
+        # Check ahead/behind
+        ahead_behind = subprocess.run(
+            ["git", "rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+            cwd=worktree_path,
+            capture_output=True,
+            text=True
+        )
+        ahead = behind = 0
+        if ahead_behind.returncode == 0 and ahead_behind.stdout.strip():
+            parts = ahead_behind.stdout.strip().split()
+            if len(parts) == 2:
+                ahead, behind = int(parts[0]), int(parts[1])
+
+        return {
+            "branch": branch,
+            "modified": modified,
+            "added": added,
+            "deleted": deleted,
+            "untracked": untracked,
+            "ahead": ahead,
+            "behind": behind,
+            "clean": len(status_lines) == 0,
+            "worktree_path": worktree_path
+        }
+    except Exception as e:
+        return {"error": str(e), "worktree_path": worktree_path}
+
+
 # Note: sync_worktrees is registered at project level in app.py
 async def sync_worktrees(project_id: str):
     """Detect existing git worktrees and register them as agents."""

@@ -49,6 +49,7 @@ async def chat_websocket(websocket: WebSocket, chat_id: str):
         resume = init_data.get("resume", True)
         session_id = init_data.get("session_id")
         mode = init_data.get("mode", "normal")
+        allowed_tools = init_data.get("allowedTools", [])
 
         # Get model from settings
         settings = db.get_settings()
@@ -70,7 +71,7 @@ async def chat_websocket(websocket: WebSocket, chat_id: str):
         project_root = Path(project["root_path"]) if project else None
 
         runner = ClaudeRunner(agent, project_root)
-        print(f"[CHAT] Starting Claude runner for agent={agent}, workdir={runner.workdir}, images={len(images)}, mode={mode}, model={model}, session_id={session_id}, is_new={is_new_session}, resume={resume}")
+        print(f"[CHAT] Starting Claude runner for agent={agent}, workdir={runner.workdir}, images={len(images)}, mode={mode}, model={model}, session_id={session_id}, is_new={is_new_session}, resume={resume}, allowed_tools={allowed_tools}")
 
         await websocket.send_json({
             "type": "chat_start",
@@ -86,8 +87,9 @@ async def chat_websocket(websocket: WebSocket, chat_id: str):
         # If resuming with a known session_id, use that (no need to capture from output)
         real_session_id = session_id if session_id and resume else None
         output_count = 0
+        permission_denials = []  # Track permission denials
 
-        async for output in runner.run_chat(message, session_id, resume, images=images, mode=mode, model=model):
+        async for output in runner.run_chat(message, session_id, resume, images=images, mode=mode, model=model, allowed_tools=allowed_tools if allowed_tools else None):
             output_count += 1
             output_type = output.get('type')
             print(f"[CHAT] Output #{output_count}: type={output_type}")
@@ -101,6 +103,11 @@ async def chat_websocket(websocket: WebSocket, chat_id: str):
                 elif output.get('session_id'):
                     real_session_id = output['session_id']
                     print(f"[CHAT] Captured real session ID: {real_session_id}")
+
+            # Capture permission denials from result message
+            if output_type == 'result' and output.get('permission_denials'):
+                permission_denials = output['permission_denials']
+                print(f"[CHAT] Permission denials: {len(permission_denials)}")
 
             # Add real session_id to output if we have it
             if real_session_id and 'session_id' not in output:
@@ -145,8 +152,12 @@ async def chat_websocket(websocket: WebSocket, chat_id: str):
                 except asyncio.TimeoutError:
                     pass
 
-        print(f"[CHAT] Done streaming, total outputs: {output_count}, session_id: {real_session_id}")
-        await websocket.send_json({"type": "chat_done", "session_id": real_session_id})
+        print(f"[CHAT] Done streaming, total outputs: {output_count}, session_id: {real_session_id}, denials: {len(permission_denials)}")
+        await websocket.send_json({
+            "type": "chat_done",
+            "session_id": real_session_id,
+            "permission_denials": permission_denials if permission_denials else None
+        })
 
     except WebSocketDisconnect:
         if runner:

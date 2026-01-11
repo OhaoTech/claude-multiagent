@@ -87,6 +87,7 @@ class ClaudeRunner:
         images: Optional[list[str]] = None,
         mode: str = "normal",
         model: str = "sonnet",
+        allowed_tools: Optional[list[str]] = None,
         on_output: Optional[Callable[[str], None]] = None
     ) -> AsyncGenerator[dict, None]:
         """
@@ -99,6 +100,7 @@ class ClaudeRunner:
             images: List of base64 data URLs for images
             mode: Operating mode (normal, plan, auto, yolo)
             model: Model to use (haiku, sonnet, opus)
+            allowed_tools: List of tool names to pre-approve (for re-runs)
             on_output: Optional callback for each output chunk
 
         Yields:
@@ -169,6 +171,12 @@ class ClaudeRunner:
             # This auto-accepts file edits while still showing tool use in UI
             cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
             cmd_parts.extend(["--permission-mode", "acceptEdits"])
+
+        # Add explicitly allowed tools (for re-runs with approved tools)
+        if allowed_tools:
+            tools_str = ",".join(allowed_tools)
+            cmd_parts.extend(["--allowedTools", tools_str])
+            print(f"[RUNNER] Pre-approved tools: {tools_str}")
 
         # Set max turns to prevent runaway
         cmd_parts.extend(["--max-turns", "50"])

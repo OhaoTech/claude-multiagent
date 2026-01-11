@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
-import { Send, Square, User, Bot, History, Wrench, CheckCircle, ChevronRight, ChevronDown, Terminal } from 'lucide-react'
+import { Send, Square, User, Bot, History, Wrench, CheckCircle, ChevronRight, ChevronDown, Terminal, AlertTriangle, RefreshCw, X } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { useChatStore } from '../../stores/chatStore'
 import { useProjectStore } from '../../stores/projectStore'
-import { ModeSelector, type ChatMode } from './ModeSelector'
+import { ModeSelector } from './ModeSelector'
 import { SessionPicker } from './SessionPicker'
 import { ImageAttachment } from './ImageAttachment'
 import { CommandPalette } from './CommandPalette'
@@ -16,7 +16,6 @@ interface ChatPanelProps {
 
 export function ChatPanel({ width }: ChatPanelProps) {
   const [input, setInput] = useState('')
-  const [mode, setMode] = useState<ChatMode>('normal')
   const [images, setImages] = useState<string[]>([])
   const [showSessionPicker, setShowSessionPicker] = useState(false)
   const [showCommandPalette, setShowCommandPalette] = useState(false)
@@ -29,13 +28,19 @@ export function ChatPanel({ width }: ChatPanelProps) {
     currentAgent,
     activeSession,
     pendingPermission,
+    permissionDenials,
+    currentMode,
     sendMessage,
     sendPermissionResponse,
     stopChat,
     setAgent,
+    setMode,
     loadSession,
     clearMessages,
     restoreSession,
+    clearPermissionDenials,
+    rerunWithApprovedTools,
+    answerQuestion,
   } = useChatStore()
   const { agents } = useProjectStore()
 
@@ -196,6 +201,19 @@ export function ChatPanel({ width }: ChatPanelProps) {
         />
       )}
 
+      {/* Permission denials banner */}
+      {permissionDenials.length > 0 && !isStreaming && (
+        <PermissionDenialBanner
+          denials={permissionDenials}
+          onApproveAll={() => {
+            const toolNames = [...new Set(permissionDenials.map(d => d.tool_name))]
+            rerunWithApprovedTools(toolNames)
+          }}
+          onDismiss={clearPermissionDenials}
+          onAnswerQuestion={answerQuestion}
+        />
+      )}
+
       {/* Input area */}
       <div className="p-3 border-t border-[var(--border)] space-y-2 flex-shrink-0">
         {/* Image previews */}
@@ -205,7 +223,7 @@ export function ChatPanel({ width }: ChatPanelProps) {
 
         {/* Mode and tools row */}
         <div className="flex items-center justify-between">
-          <ModeSelector mode={mode} onModeChange={setMode} />
+          <ModeSelector mode={currentMode} onModeChange={setMode} />
           <div className="flex items-center gap-1">
             <ImageAttachment images={images} onImagesChange={setImages} />
           </div>
@@ -261,6 +279,173 @@ export function ChatPanel({ width }: ChatPanelProps) {
         />
       )}
     </aside>
+  )
+}
+
+// Permission denial banner component
+interface PermissionDenial {
+  tool_name: string
+  tool_use_id: string
+  tool_input: Record<string, unknown>
+}
+
+// AskUserQuestion input structure
+interface AskUserQuestionInput {
+  questions: Array<{
+    question: string
+    header: string
+    options: Array<{
+      label: string
+      description: string
+    }>
+    multiSelect: boolean
+  }>
+}
+
+function PermissionDenialBanner({
+  denials,
+  onApproveAll,
+  onDismiss,
+  onAnswerQuestion,
+}: {
+  denials: PermissionDenial[]
+  onApproveAll: () => void
+  onDismiss: () => void
+  onAnswerQuestion?: (answers: Record<string, string>) => void
+}) {
+  const [customInput, setCustomInput] = useState('')
+  const [selectedOptions, setSelectedOptions] = useState<Record<string, string>>({})
+
+  const uniqueTools = [...new Set(denials.map(d => d.tool_name))]
+
+  // Check if this is an AskUserQuestion denial
+  const askQuestionDenial = denials.find(d => d.tool_name === 'AskUserQuestion')
+  const questionInput = askQuestionDenial?.tool_input as AskUserQuestionInput | undefined
+
+  // Handle option selection
+  const handleOptionSelect = (questionIdx: number, optionLabel: string) => {
+    setSelectedOptions(prev => ({
+      ...prev,
+      [`q${questionIdx}`]: optionLabel
+    }))
+  }
+
+  // Handle submit with answers
+  const handleSubmitAnswers = () => {
+    if (onAnswerQuestion) {
+      // If custom input is provided, use that
+      if (customInput.trim()) {
+        onAnswerQuestion({ custom: customInput.trim() })
+      } else {
+        onAnswerQuestion(selectedOptions)
+      }
+    }
+  }
+
+  // Render AskUserQuestion UI
+  if (questionInput?.questions && questionInput.questions.length > 0) {
+    return (
+      <div className="mx-3 mb-2 p-3 bg-blue-900/30 border border-blue-700/50 rounded-lg">
+        <div className="flex items-start gap-2">
+          <AlertTriangle size={18} className="text-blue-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-medium text-blue-200 mb-2">
+              Agent is asking a question
+            </div>
+
+            {questionInput.questions.map((q, qIdx) => (
+              <div key={qIdx} className="mb-3">
+                <div className="text-sm text-white mb-2">{q.question}</div>
+                <div className="flex flex-wrap gap-2">
+                  {q.options.map((opt, optIdx) => (
+                    <button
+                      key={optIdx}
+                      onClick={() => handleOptionSelect(qIdx, opt.label)}
+                      className={`px-3 py-1.5 text-xs rounded transition-colors ${
+                        selectedOptions[`q${qIdx}`] === opt.label
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-[var(--bg-tertiary)] hover:bg-[var(--bg-secondary)] text-[var(--text-secondary)]'
+                      }`}
+                      title={opt.description}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+
+            {/* Custom input option */}
+            <div className="mt-3 pt-3 border-t border-blue-700/30">
+              <div className="text-xs text-blue-300/80 mb-1">Or type a custom response:</div>
+              <input
+                type="text"
+                value={customInput}
+                onChange={(e) => setCustomInput(e.target.value)}
+                placeholder="Type your answer..."
+                className="w-full px-2 py-1.5 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs focus:outline-none focus:border-blue-500"
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && (customInput.trim() || Object.keys(selectedOptions).length > 0)) {
+                    handleSubmitAnswers()
+                  }
+                }}
+              />
+            </div>
+
+            <div className="flex gap-2 mt-3">
+              <button
+                onClick={handleSubmitAnswers}
+                disabled={!customInput.trim() && Object.keys(selectedOptions).length === 0}
+                className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs rounded transition-colors"
+              >
+                <Send size={12} />
+                Submit Answer
+              </button>
+              <button
+                onClick={onDismiss}
+                className="flex items-center gap-1 px-2 py-1 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-secondary)] text-xs rounded transition-colors"
+              >
+                <X size={12} />
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  // Default denial banner for other tools
+  return (
+    <div className="mx-3 mb-2 p-3 bg-amber-900/30 border border-amber-700/50 rounded-lg">
+      <div className="flex items-start gap-2">
+        <AlertTriangle size={18} className="text-amber-400 flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0">
+          <div className="text-sm font-medium text-amber-200">
+            {denials.length} permission{denials.length > 1 ? 's' : ''} denied
+          </div>
+          <div className="text-xs text-amber-300/80 mt-1">
+            Tools blocked: {uniqueTools.join(', ')}
+          </div>
+          <div className="flex gap-2 mt-2">
+            <button
+              onClick={onApproveAll}
+              className="flex items-center gap-1 px-2 py-1 bg-amber-600 hover:bg-amber-500 text-white text-xs rounded transition-colors"
+            >
+              <RefreshCw size={12} />
+              Approve & Re-run
+            </button>
+            <button
+              onClick={onDismiss}
+              className="flex items-center gap-1 px-2 py-1 bg-[var(--bg-tertiary)] hover:bg-[var(--bg-secondary)] text-xs rounded transition-colors"
+            >
+              <X size={12} />
+              Dismiss
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   )
 }
 

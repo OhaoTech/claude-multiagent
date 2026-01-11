@@ -2,6 +2,7 @@
 
 Schedules tasks to idle agents based on priority and dependencies.
 Respects work modes from team-state.yaml.
+Integrates with rate limit monitoring for sustainable autonomous operation.
 """
 
 import asyncio
@@ -16,6 +17,7 @@ import frontmatter
 import yaml
 
 import database as db
+from services.rate_limiter import RateLimitMonitor
 
 
 class TaskScheduler:
@@ -37,6 +39,11 @@ class TaskScheduler:
         self._last_run: Optional[str] = None
         self._running_tasks: dict[str, asyncio.Task] = {}  # task_id -> subprocess task
 
+        # Rate limit monitoring
+        self._rate_monitor = RateLimitMonitor()
+        self._paused_for_rate_limit = False
+        self._rate_limit_reason: Optional[str] = None
+
     @property
     def is_running(self) -> bool:
         return self._running
@@ -44,6 +51,30 @@ class TaskScheduler:
     @property
     def last_run(self) -> Optional[str]:
         return self._last_run
+
+    @property
+    def is_paused_for_rate_limit(self) -> bool:
+        return self._paused_for_rate_limit
+
+    @property
+    def rate_limit_reason(self) -> Optional[str]:
+        return self._rate_limit_reason
+
+    def get_rate_limit_status(self) -> dict:
+        """Get current rate limit status."""
+        usage = self._rate_monitor.get_usage_percentage()
+        should_pause, pause_reason = self._rate_monitor.should_pause()
+        should_throttle, throttle_reason = self._rate_monitor.should_throttle()
+
+        return {
+            "usage": usage,
+            "should_pause": should_pause,
+            "pause_reason": pause_reason if should_pause else None,
+            "should_throttle": should_throttle,
+            "throttle_reason": throttle_reason if should_throttle else None,
+            "is_paused": self._paused_for_rate_limit,
+            "paused_reason": self._rate_limit_reason,
+        }
 
     async def start(self):
         """Start the scheduler loop."""
@@ -87,6 +118,35 @@ class TaskScheduler:
 
     async def _process_queue(self):
         """Process pending tasks and assign to idle agents."""
+        # 0. Check rate limits first
+        should_pause, pause_reason = self._rate_monitor.should_pause()
+        if should_pause:
+            if not self._paused_for_rate_limit:
+                self._paused_for_rate_limit = True
+                self._rate_limit_reason = pause_reason
+                print(f"[SCHEDULER] Paused for rate limit: {pause_reason}")
+                if self.broadcast:
+                    await self.broadcast({
+                        "type": "scheduler_paused",
+                        "data": {
+                            "reason": "rate_limit",
+                            "message": pause_reason,
+                            "usage": self._rate_monitor.get_usage_percentage()
+                        }
+                    })
+            return
+
+        # Resume if we were paused but limits are ok now
+        if self._paused_for_rate_limit:
+            self._paused_for_rate_limit = False
+            self._rate_limit_reason = None
+            print("[SCHEDULER] Resumed after rate limit cooldown")
+            if self.broadcast:
+                await self.broadcast({
+                    "type": "scheduler_resumed",
+                    "data": {"reason": "rate_limit_cleared"}
+                })
+
         # 1. Update blocked tasks (check if dependencies completed)
         self._update_blocked_tasks()
 
@@ -105,7 +165,14 @@ class TaskScheduler:
         if not pending_tasks:
             return
 
-        # 4. Assign tasks to agents
+        # 4. Check if we should throttle (approaching limits)
+        should_throttle, throttle_reason = self._rate_monitor.should_throttle()
+        if should_throttle:
+            # In throttle mode, only dispatch one task per cycle
+            print(f"[SCHEDULER] Throttling: {throttle_reason}")
+            idle_agents = idle_agents[:1]
+
+        # 5. Assign tasks to agents
         for agent in idle_agents:
             if not pending_tasks:
                 break
@@ -114,6 +181,10 @@ class TaskScheduler:
             if task:
                 await self._dispatch_task(task, agent)
                 pending_tasks.remove(task)
+
+                # If throttling, stop after one dispatch
+                if should_throttle:
+                    break
 
     def _get_team_state(self) -> dict:
         """Read team state from .claude/team-state.yaml."""

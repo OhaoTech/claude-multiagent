@@ -1,5 +1,9 @@
-import { useState, useRef, useEffect } from 'react'
-import { X, Maximize2, Minimize2 } from 'lucide-react'
+import { useRef, useEffect, useCallback, useState } from 'react'
+import { X, Maximize2, Minimize2, Copy, ClipboardPaste, Trash2, CheckSquare } from 'lucide-react'
+import { Terminal as XTerm } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import { WebLinksAddon } from '@xterm/addon-web-links'
+import '@xterm/xterm/css/xterm.css'
 
 interface TerminalProps {
   height: number
@@ -7,80 +11,205 @@ interface TerminalProps {
   onHeightChange: (height: number) => void
 }
 
-interface TerminalLine {
-  id: number
-  type: 'input' | 'output' | 'error'
-  content: string
-  timestamp: Date
+interface ContextMenuState {
+  visible: boolean
+  x: number
+  y: number
 }
 
 export function Terminal({ height, onClose, onHeightChange }: TerminalProps) {
-  const [input, setInput] = useState('')
-  const [lines, setLines] = useState<TerminalLine[]>([])
-  const [isRunning, setIsRunning] = useState(false)
-  const [isMaximized, setIsMaximized] = useState(false)
-  const outputRef = useRef<HTMLDivElement>(null)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const lineIdRef = useRef(0)
+  const terminalRef = useRef<HTMLDivElement>(null)
+  const xtermRef = useRef<XTerm | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
+  const wsRef = useRef<WebSocket | null>(null)
+  const terminalIdRef = useRef<string>(`term-${Date.now()}`)
+  const isMaximizedRef = useRef(false)
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null)
+  const [contextMenu, setContextMenu] = useState<ContextMenuState>({ visible: false, x: 0, y: 0 })
 
-  // Auto-scroll to bottom when new lines are added
-  useEffect(() => {
-    if (outputRef.current) {
-      outputRef.current.scrollTop = outputRef.current.scrollHeight
+  // Fit terminal to container
+  const fitTerminal = useCallback(() => {
+    if (fitAddonRef.current && xtermRef.current) {
+      try {
+        fitAddonRef.current.fit()
+        // Send resize to server
+        if (wsRef.current?.readyState === WebSocket.OPEN) {
+          const { cols, rows } = xtermRef.current
+          wsRef.current.send(`resize:${cols}:${rows}`)
+        }
+      } catch (e) {
+        // Ignore fit errors during initialization
+      }
     }
-  }, [lines])
-
-  // Focus input on mount
-  useEffect(() => {
-    inputRef.current?.focus()
   }, [])
 
-  const addLine = (type: TerminalLine['type'], content: string) => {
-    setLines(prev => [...prev, {
-      id: lineIdRef.current++,
-      type,
-      content,
-      timestamp: new Date()
-    }])
-  }
+  // Context menu handlers
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    setContextMenu({ visible: true, x: e.clientX, y: e.clientY })
+  }, [])
 
-  const runCommand = async (cmd: string) => {
-    if (!cmd.trim()) return
+  const closeContextMenu = useCallback(() => {
+    setContextMenu({ visible: false, x: 0, y: 0 })
+  }, [])
 
-    addLine('input', `$ ${cmd}`)
-    setIsRunning(true)
+  const handleCopy = useCallback(async () => {
+    const selection = xtermRef.current?.getSelection()
+    if (selection) {
+      await navigator.clipboard.writeText(selection)
+    }
+    closeContextMenu()
+  }, [closeContextMenu])
 
+  const handlePaste = useCallback(async () => {
     try {
-      const res = await fetch('/api/terminal/exec', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ command: cmd })
-      })
-      const data = await res.json()
-
-      if (data.stdout) {
-        addLine('output', data.stdout)
-      }
-      if (data.stderr) {
-        addLine('error', data.stderr)
-      }
-      if (data.error) {
-        addLine('error', data.error)
+      const text = await navigator.clipboard.readText()
+      if (text && wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current.send(new TextEncoder().encode(text))
       }
     } catch (err) {
-      addLine('error', `Failed to execute command: ${err}`)
-    } finally {
-      setIsRunning(false)
+      console.error('Failed to paste:', err)
     }
-  }
+    closeContextMenu()
+  }, [closeContextMenu])
 
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !isRunning) {
-      runCommand(input)
-      setInput('')
+  const handleSelectAll = useCallback(() => {
+    xtermRef.current?.selectAll()
+    closeContextMenu()
+  }, [closeContextMenu])
+
+  const handleClear = useCallback(() => {
+    xtermRef.current?.clear()
+    closeContextMenu()
+  }, [closeContextMenu])
+
+  // Close context menu on click outside
+  useEffect(() => {
+    if (contextMenu.visible) {
+      const handleClick = () => closeContextMenu()
+      document.addEventListener('click', handleClick)
+      return () => document.removeEventListener('click', handleClick)
     }
-  }
+  }, [contextMenu.visible, closeContextMenu])
+
+  // Initialize terminal
+  useEffect(() => {
+    if (!terminalRef.current || xtermRef.current) return
+
+    // Create xterm instance
+    const xterm = new XTerm({
+      cursorBlink: true,
+      fontSize: 13,
+      fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+      theme: {
+        background: '#1a1a1a',
+        foreground: '#e0e0e0',
+        cursor: '#00d9ff',
+        cursorAccent: '#1a1a1a',
+        selectionBackground: '#264f78',
+        black: '#1a1a1a',
+        red: '#f44747',
+        green: '#6a9955',
+        yellow: '#dcdcaa',
+        blue: '#569cd6',
+        magenta: '#c586c0',
+        cyan: '#4ec9b0',
+        white: '#e0e0e0',
+        brightBlack: '#808080',
+        brightRed: '#f44747',
+        brightGreen: '#6a9955',
+        brightYellow: '#dcdcaa',
+        brightBlue: '#569cd6',
+        brightMagenta: '#c586c0',
+        brightCyan: '#4ec9b0',
+        brightWhite: '#ffffff',
+      },
+      allowProposedApi: true,
+      rightClickSelectsWord: true,
+    })
+
+    // Add addons
+    const fitAddon = new FitAddon()
+    const webLinksAddon = new WebLinksAddon()
+    xterm.loadAddon(fitAddon)
+    xterm.loadAddon(webLinksAddon)
+
+    // Store refs
+    xtermRef.current = xterm
+    fitAddonRef.current = fitAddon
+
+    // Open terminal
+    xterm.open(terminalRef.current)
+
+    // Initial fit
+    setTimeout(() => {
+      fitTerminal()
+    }, 0)
+
+    // Connect WebSocket
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/terminal/${terminalIdRef.current}`)
+    ws.binaryType = 'arraybuffer'
+    wsRef.current = ws
+
+    ws.onopen = () => {
+      console.log('[Terminal] WebSocket connected')
+      // Send initial size
+      const { cols, rows } = xterm
+      ws.send(`resize:${cols}:${rows}`)
+    }
+
+    ws.onmessage = (event) => {
+      if (event.data instanceof ArrayBuffer) {
+        const data = new Uint8Array(event.data)
+        xterm.write(data)
+      } else {
+        xterm.write(event.data)
+      }
+    }
+
+    ws.onerror = (error) => {
+      console.error('[Terminal] WebSocket error:', error)
+      xterm.write('\r\n\x1b[31mWebSocket error - terminal disconnected\x1b[0m\r\n')
+    }
+
+    ws.onclose = () => {
+      console.log('[Terminal] WebSocket closed')
+      xterm.write('\r\n\x1b[33mTerminal session ended\x1b[0m\r\n')
+    }
+
+    // Send input to server
+    xterm.onData((data) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(new TextEncoder().encode(data))
+      }
+    })
+
+    // Handle resize
+    const resizeObserver = new ResizeObserver(() => {
+      fitTerminal()
+    })
+    resizeObserver.observe(terminalRef.current)
+
+    // Focus terminal
+    xterm.focus()
+
+    return () => {
+      resizeObserver.disconnect()
+      ws.close()
+      xterm.dispose()
+      xtermRef.current = null
+      fitAddonRef.current = null
+      wsRef.current = null
+    }
+  }, [fitTerminal])
+
+  // Refit when height changes
+  useEffect(() => {
+    setTimeout(() => {
+      fitTerminal()
+    }, 0)
+  }, [height, fitTerminal])
 
   const handleDragStart = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -102,16 +231,19 @@ export function Terminal({ height, onClose, onHeightChange }: TerminalProps) {
     document.removeEventListener('mouseup', handleDragEnd)
   }
 
-  const clearTerminal = () => {
-    setLines([])
+  const toggleMaximize = () => {
+    isMaximizedRef.current = !isMaximizedRef.current
+    onHeightChange(isMaximizedRef.current ? 400 : 200)
   }
 
-  const actualHeight = isMaximized ? 400 : height
+  const clearTerminal = () => {
+    xtermRef.current?.clear()
+  }
 
   return (
     <div
       className="bg-[var(--bg-secondary)] border-t border-[var(--border)] flex flex-col"
-      style={{ height: actualHeight }}
+      style={{ height }}
     >
       {/* Drag handle */}
       <div
@@ -123,9 +255,6 @@ export function Terminal({ height, onClose, onHeightChange }: TerminalProps) {
       <div className="h-8 flex items-center justify-between px-3 border-b border-[var(--border)] flex-shrink-0">
         <div className="flex items-center gap-2">
           <span className="text-xs font-semibold uppercase text-[var(--text-secondary)]">Terminal</span>
-          {isRunning && (
-            <span className="text-xs text-[var(--accent)]">Running...</span>
-          )}
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -135,11 +264,11 @@ export function Terminal({ height, onClose, onHeightChange }: TerminalProps) {
             Clear
           </button>
           <button
-            onClick={() => setIsMaximized(!isMaximized)}
+            onClick={toggleMaximize}
             className="p-1 hover:bg-[var(--bg-tertiary)] rounded transition-colors"
-            title={isMaximized ? 'Restore' : 'Maximize'}
+            title={isMaximizedRef.current ? 'Restore' : 'Maximize'}
           >
-            {isMaximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            {isMaximizedRef.current ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
           </button>
           <button
             onClick={onClose}
@@ -151,42 +280,57 @@ export function Terminal({ height, onClose, onHeightChange }: TerminalProps) {
         </div>
       </div>
 
-      {/* Output area */}
+      {/* Terminal container */}
       <div
-        ref={outputRef}
-        className="flex-1 overflow-y-auto font-mono text-sm p-2 bg-[#1a1a1a]"
-        onClick={() => inputRef.current?.focus()}
-      >
-        {lines.map(line => (
-          <div
-            key={line.id}
-            className={`whitespace-pre-wrap break-all ${
-              line.type === 'input' ? 'text-[var(--accent)]' :
-              line.type === 'error' ? 'text-red-400' :
-              'text-[var(--text-primary)]'
-            }`}
-          >
-            {line.content}
-          </div>
-        ))}
+        ref={terminalRef}
+        className="flex-1 overflow-hidden"
+        style={{ padding: '4px' }}
+        onClick={() => xtermRef.current?.focus()}
+        onContextMenu={handleContextMenu}
+      />
 
-        {/* Input line */}
-        <div className="flex items-center text-[var(--accent)]">
-          <span className="mr-2">$</span>
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={e => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isRunning}
-            className="flex-1 bg-transparent outline-none text-white disabled:opacity-50"
-            placeholder={isRunning ? 'Running...' : ''}
-            autoComplete="off"
-            spellCheck={false}
-          />
+      {/* Context Menu */}
+      {contextMenu.visible && (
+        <div
+          className="fixed bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg shadow-xl py-1 z-50 min-w-[160px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={handleCopy}
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-[var(--bg-tertiary)] flex items-center gap-2"
+          >
+            <Copy size={14} />
+            <span>Copy</span>
+            <span className="ml-auto text-xs text-[var(--text-secondary)]">Ctrl+C</span>
+          </button>
+          <button
+            onClick={handlePaste}
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-[var(--bg-tertiary)] flex items-center gap-2"
+          >
+            <ClipboardPaste size={14} />
+            <span>Paste</span>
+            <span className="ml-auto text-xs text-[var(--text-secondary)]">Ctrl+V</span>
+          </button>
+          <div className="border-t border-[var(--border)] my-1" />
+          <button
+            onClick={handleSelectAll}
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-[var(--bg-tertiary)] flex items-center gap-2"
+          >
+            <CheckSquare size={14} />
+            <span>Select All</span>
+            <span className="ml-auto text-xs text-[var(--text-secondary)]">Ctrl+A</span>
+          </button>
+          <div className="border-t border-[var(--border)] my-1" />
+          <button
+            onClick={handleClear}
+            className="w-full px-3 py-1.5 text-sm text-left hover:bg-[var(--bg-tertiary)] flex items-center gap-2"
+          >
+            <Trash2 size={14} />
+            <span>Clear Terminal</span>
+          </button>
         </div>
-      </div>
+      )}
     </div>
   )
 }

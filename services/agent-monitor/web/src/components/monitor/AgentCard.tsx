@@ -1,9 +1,22 @@
 import { useState, useRef, useEffect } from 'react'
-import { Crown, Play, Pause, AlertCircle, Trash2, Pencil } from 'lucide-react'
+import { Crown, Play, Pause, AlertCircle, Trash2, Pencil, GitBranch, ArrowUp, ArrowDown, FileEdit, FilePlus, FileX } from 'lucide-react'
 import type { AgentState } from '../../stores/wsStore'
+import { useProjectStore } from '../../stores/projectStore'
+
+interface GitStatus {
+  branch: string
+  modified: number
+  added: number
+  deleted: number
+  untracked: number
+  ahead: number
+  behind: number
+  clean: boolean
+  error?: string
+}
 
 interface AgentCardProps {
-  agent: AgentState
+  agent: AgentState & { id?: string }
   isSelected: boolean
   onClick: () => void
   onSetLeader?: () => void
@@ -32,7 +45,31 @@ export function AgentCard({ agent, isSelected, onClick, onSetLeader, onRemove, o
   const [showNicknameDialog, setShowNicknameDialog] = useState(false)
   const [removeWorktree, setRemoveWorktree] = useState(true)
   const [nicknameInput, setNicknameInput] = useState(agent.nickname || '')
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null)
   const menuRef = useRef<HTMLDivElement>(null)
+  const { activeProject } = useProjectStore()
+
+  // Fetch git status
+  useEffect(() => {
+    if (!agent.id || !activeProject) return
+
+    const fetchGitStatus = async () => {
+      try {
+        const res = await fetch(`/api/projects/${activeProject.id}/agents/${agent.id}/git-status`)
+        if (res.ok) {
+          const data = await res.json()
+          setGitStatus(data)
+        }
+      } catch {
+        // Ignore errors
+      }
+    }
+
+    fetchGitStatus()
+    // Refresh every 30 seconds
+    const interval = setInterval(fetchGitStatus, 30000)
+    return () => clearInterval(interval)
+  }, [agent.id, activeProject])
 
   // Close context menu when clicking outside
   useEffect(() => {
@@ -120,6 +157,60 @@ export function AgentCard({ agent, isSelected, onClick, onSetLeader, onRemove, o
             <span>Runs</span>
             <span>{agent.run_count || 0}</span>
           </div>
+
+          {/* Git Status */}
+          {gitStatus && !gitStatus.error && (
+            <div className="mt-2 pt-2 border-t border-[var(--border)]">
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1">
+                  <GitBranch size={10} />
+                  <span className="font-mono text-[10px]">{gitStatus.branch}</span>
+                </div>
+                {(gitStatus.ahead > 0 || gitStatus.behind > 0) && (
+                  <div className="flex items-center gap-1 text-[10px]">
+                    {gitStatus.ahead > 0 && (
+                      <span className="flex items-center text-green-400">
+                        <ArrowUp size={10} />
+                        {gitStatus.ahead}
+                      </span>
+                    )}
+                    {gitStatus.behind > 0 && (
+                      <span className="flex items-center text-orange-400">
+                        <ArrowDown size={10} />
+                        {gitStatus.behind}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+              {!gitStatus.clean && (
+                <div className="flex items-center gap-2 text-[10px]">
+                  {gitStatus.modified > 0 && (
+                    <span className="flex items-center gap-0.5 text-yellow-400" title="Modified">
+                      <FileEdit size={10} />
+                      {gitStatus.modified}
+                    </span>
+                  )}
+                  {(gitStatus.added + gitStatus.untracked) > 0 && (
+                    <span className="flex items-center gap-0.5 text-green-400" title="Added/New">
+                      <FilePlus size={10} />
+                      {gitStatus.added + gitStatus.untracked}
+                    </span>
+                  )}
+                  {gitStatus.deleted > 0 && (
+                    <span className="flex items-center gap-0.5 text-red-400" title="Deleted">
+                      <FileX size={10} />
+                      {gitStatus.deleted}
+                    </span>
+                  )}
+                </div>
+              )}
+              {gitStatus.clean && (
+                <span className="text-[10px] text-green-400">Clean</span>
+              )}
+            </div>
+          )}
+
           {agent.current_task && (
             <div className="mt-2 truncate text-[var(--text-primary)]">
               {agent.current_task}

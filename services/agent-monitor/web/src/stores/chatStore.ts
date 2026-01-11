@@ -3,6 +3,9 @@ import type { ChatMessage, SessionInfo } from '../types'
 
 const STORAGE_SESSION = 'cc-chat-session'
 const STORAGE_AGENT = 'cc-chat-agent'
+const STORAGE_MODE = 'cc-chat-mode'
+
+export type ChatMode = 'normal' | 'plan' | 'auto' | 'yolo'
 
 interface PermissionRequest {
   prompt: string
@@ -11,24 +14,37 @@ interface PermissionRequest {
   options: string[]
 }
 
+interface PermissionDenial {
+  tool_name: string
+  tool_use_id: string
+  tool_input: Record<string, unknown>
+}
+
 interface ChatState {
   messages: ChatMessage[]
   sessions: SessionInfo[]
   activeSession: string | null
   isStreaming: boolean
   currentAgent: string
+  currentMode: ChatMode
   ws: WebSocket | null
   pendingPermission: PermissionRequest | null
+  permissionDenials: PermissionDenial[]
+  lastMessage: string | null  // For re-run with approved tools
 
   // Actions
   fetchSessions: (agent?: string) => Promise<void>
   loadSession: (sessionId: string) => Promise<void>
   restoreSession: () => Promise<void>
-  sendMessage: (message: string, images?: string[]) => void
+  sendMessage: (message: string, images?: string[], allowedTools?: string[]) => void
   sendPermissionResponse: (response: string) => void
   stopChat: () => void
   setAgent: (agent: string) => void
+  setMode: (mode: ChatMode) => void
   clearMessages: () => void
+  clearPermissionDenials: () => void
+  rerunWithApprovedTools: (tools: string[]) => void
+  answerQuestion: (answers: Record<string, string>) => void
 }
 
 export const useChatStore = create<ChatState>((set, get) => ({
@@ -37,8 +53,11 @@ export const useChatStore = create<ChatState>((set, get) => ({
   activeSession: localStorage.getItem(STORAGE_SESSION),
   isStreaming: false,
   currentAgent: localStorage.getItem(STORAGE_AGENT) || 'leader',
+  currentMode: (localStorage.getItem(STORAGE_MODE) as ChatMode) || 'normal',
   ws: null,
   pendingPermission: null,
+  permissionDenials: [],
+  lastMessage: null,
 
   fetchSessions: async (agent?: string) => {
     try {
@@ -83,21 +102,22 @@ export const useChatStore = create<ChatState>((set, get) => ({
           }))
           set({ messages })
         } else {
-          // Session not found, clear it
           localStorage.removeItem(STORAGE_SESSION)
           set({ activeSession: null, messages: [] })
         }
       } catch {
-        // Failed to restore, clear session
         localStorage.removeItem(STORAGE_SESSION)
         set({ activeSession: null, messages: [] })
       }
     }
   },
 
-  sendMessage: (message: string, images: string[] = []) => {
+  sendMessage: (message: string, images: string[] = [], allowedTools?: string[]) => {
     const state = get()
     if (state.isStreaming) return
+
+    // Store message for potential re-run
+    set({ lastMessage: message, permissionDenials: [] })
 
     // Add user message
     const userMessage: ChatMessage = {
@@ -114,14 +134,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
 
     ws.onopen = () => {
       set({ isStreaming: true, ws })
-      ws.send(JSON.stringify({
+      const payload: Record<string, unknown> = {
         agent: state.currentAgent,
         message,
         images,
         resume: true,
         session_id: state.activeSession,
-        mode: 'normal',
-      }))
+        mode: state.currentMode,
+      }
+
+      // Add allowed tools if specified (for re-run with approved permissions)
+      if (allowedTools && allowedTools.length > 0) {
+        payload.allowedTools = allowedTools
+      }
+
+      ws.send(JSON.stringify(payload))
     }
 
     // Track session_id from init but only save it on success
@@ -136,12 +163,10 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       if (data.type === 'chat_start') {
-        // Session starting - don't save session_id yet
         return
       }
 
       if (data.type === 'permission_request') {
-        // Claude is asking for permission to use a tool
         set({
           pendingPermission: {
             prompt: data.prompt || 'Permission requested',
@@ -154,17 +179,13 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }
 
       if (data.type === 'permission_response_sent') {
-        // Permission response was sent, clear pending
         set({ pendingPermission: null })
         return
       }
 
       if (data.type === 'chat_output' || data.type === 'assistant') {
-        // Handle both legacy chat_output and Claude's native assistant format
         let content = ''
         if (data.type === 'assistant' && data.message?.content) {
-          // Claude's native format: { type: 'assistant', message: { content: [...] } }
-          // content is an array of content blocks
           const contentBlocks = data.message.content
           if (Array.isArray(contentBlocks)) {
             content = contentBlocks
@@ -180,7 +201,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
           set(s => {
             const lastMsg = s.messages[s.messages.length - 1]
             if (lastMsg?.type === 'assistant') {
-              // Append to existing assistant message
               return {
                 messages: [
                   ...s.messages.slice(0, -1),
@@ -188,7 +208,6 @@ export const useChatStore = create<ChatState>((set, get) => ({
                 ],
               }
             } else {
-              // Start new assistant message
               return {
                 messages: [...s.messages, { type: 'assistant', content, timestamp: Date.now() }],
               }
@@ -196,17 +215,21 @@ export const useChatStore = create<ChatState>((set, get) => ({
           })
         }
       } else if (data.type === 'chat_done') {
-        // Only save session_id on successful completion with actual output
         const currentMessages = get().messages
         const hasAssistantResponse = currentMessages.some(m => m.type === 'assistant' && m.content)
         if (pendingSessionId && hasAssistantResponse) {
           localStorage.setItem(STORAGE_SESSION, pendingSessionId)
           set({ activeSession: pendingSessionId })
         }
+
+        // Capture permission denials
+        if (data.permission_denials && data.permission_denials.length > 0) {
+          set({ permissionDenials: data.permission_denials })
+        }
+
         set({ isStreaming: false, ws: null })
         ws.close()
       } else if (data.type === 'error') {
-        // Don't save session_id on error
         set(s => ({
           messages: [...s.messages, { type: 'system', content: `Error: ${data.message}`, timestamp: Date.now() }],
           isStreaming: false,
@@ -247,8 +270,47 @@ export const useChatStore = create<ChatState>((set, get) => ({
     set({ currentAgent: agent })
   },
 
+  setMode: (mode: ChatMode) => {
+    localStorage.setItem(STORAGE_MODE, mode)
+    set({ currentMode: mode })
+  },
+
   clearMessages: () => {
     localStorage.removeItem(STORAGE_SESSION)
-    set({ messages: [], activeSession: null })
+    set({ messages: [], activeSession: null, permissionDenials: [], lastMessage: null })
+  },
+
+  clearPermissionDenials: () => {
+    set({ permissionDenials: [] })
+  },
+
+  rerunWithApprovedTools: (tools: string[]) => {
+    const state = get()
+    if (!state.lastMessage) return
+
+    // Clear the denial and re-run with approved tools
+    set({ permissionDenials: [] })
+    state.sendMessage(state.lastMessage, [], tools)
+  },
+
+  answerQuestion: (answers: Record<string, string>) => {
+    const state = get()
+
+    // Format the answer as a user message
+    let answerText = ''
+    if (answers.custom) {
+      // Custom typed answer
+      answerText = answers.custom
+    } else {
+      // Selected options - format as list
+      const answerList = Object.entries(answers)
+        .map(([_, value]) => value)
+        .join(', ')
+      answerText = answerList
+    }
+
+    // Clear denials and send the answer as a message
+    set({ permissionDenials: [] })
+    state.sendMessage(answerText)
   },
 }))

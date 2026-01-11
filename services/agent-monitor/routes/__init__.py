@@ -16,6 +16,7 @@ from . import (
     settings,
     usage,
     brainstorm,
+    terminal,
 )
 
 __all__ = [
@@ -34,4 +35,5 @@ __all__ = [
     "settings",
     "usage",
     "brainstorm",
+    "terminal",
 ]

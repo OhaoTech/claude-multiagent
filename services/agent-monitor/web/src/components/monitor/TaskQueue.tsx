@@ -18,6 +18,11 @@ import {
   FileText,
   DollarSign,
   ExternalLink,
+  GripVertical,
+  CheckSquare,
+  Square as SquareIcon,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react'
 import { useChatStore } from '../../stores/chatStore'
 import { useTaskStore, type Task } from '../../stores/taskStore'
@@ -65,6 +70,8 @@ export function TaskQueue({ compact = false }: TaskQueueProps) {
   const [showAddForm, setShowAddForm] = useState(false)
   const [expandedTasks, setExpandedTasks] = useState<Set<string>>(new Set())
   const [filterStatus, setFilterStatus] = useState<string>('all')
+  const [selectedTasks, setSelectedTasks] = useState<Set<string>>(new Set())
+  const [draggedTask, setDraggedTask] = useState<string | null>(null)
 
   // Fetch data on mount and when project changes
   useEffect(() => {
@@ -117,6 +124,78 @@ export function TaskQueue({ compact = false }: TaskQueueProps) {
       }
       return next
     })
+  }
+
+  const toggleSelect = (taskId: string) => {
+    setSelectedTasks((prev) => {
+      const next = new Set(prev)
+      if (next.has(taskId)) {
+        next.delete(taskId)
+      } else {
+        next.add(taskId)
+      }
+      return next
+    })
+  }
+
+  const selectAll = () => {
+    setSelectedTasks(new Set(filteredTasks.map(t => t.id)))
+  }
+
+  const clearSelection = () => {
+    setSelectedTasks(new Set())
+  }
+
+  const handleBulkDelete = async () => {
+    if (!activeProject?.id || selectedTasks.size === 0) return
+    for (const taskId of selectedTasks) {
+      await deleteTask(activeProject.id, taskId)
+    }
+    setSelectedTasks(new Set())
+  }
+
+  const handleBulkPriorityChange = async (delta: number) => {
+    if (!activeProject?.id || selectedTasks.size === 0) return
+    for (const taskId of selectedTasks) {
+      const task = tasks.find(t => t.id === taskId)
+      if (task) {
+        const newPriority = Math.max(0, Math.min(3, task.priority + delta))
+        if (newPriority !== task.priority) {
+          // We'd need an updateTask function in the store
+          // For now, this is a placeholder
+          console.log(`Would update ${taskId} priority to ${newPriority}`)
+        }
+      }
+    }
+    handleRefresh()
+  }
+
+  const handleDragStart = (taskId: string) => {
+    setDraggedTask(taskId)
+  }
+
+  const handleDragOver = (e: React.DragEvent, _targetId: string) => {
+    e.preventDefault()
+    // Visual feedback could be added here
+  }
+
+  const handleDrop = async (targetId: string) => {
+    if (!draggedTask || draggedTask === targetId || !activeProject?.id) {
+      setDraggedTask(null)
+      return
+    }
+
+    // Swap priorities between dragged and target tasks
+    const draggedTaskData = tasks.find(t => t.id === draggedTask)
+    const targetTaskData = tasks.find(t => t.id === targetId)
+
+    if (draggedTaskData && targetTaskData) {
+      // In a real implementation, we'd update the backend
+      console.log(`Would swap ${draggedTask} with ${targetId}`)
+    }
+
+    setDraggedTask(null)
+    handleRefresh()
   }
 
   const filteredTasks = filterStatus === 'all'
@@ -206,22 +285,78 @@ export function TaskQueue({ compact = false }: TaskQueueProps) {
         </div>
       </div>
 
+      {/* Bulk Actions Bar */}
+      {selectedTasks.size > 0 && (
+        <div className="flex items-center justify-between px-3 py-2 bg-[var(--accent)]/20 border-b border-[var(--border)]">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-medium">{selectedTasks.size} selected</span>
+            <button
+              onClick={clearSelection}
+              className="text-xs text-[var(--text-secondary)] hover:text-white"
+            >
+              Clear
+            </button>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleBulkPriorityChange(1)}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-[var(--bg-tertiary)] hover:bg-[var(--bg-secondary)] rounded transition-colors"
+              title="Increase priority"
+            >
+              <ArrowUp size={12} />
+              Priority
+            </button>
+            <button
+              onClick={() => handleBulkPriorityChange(-1)}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-[var(--bg-tertiary)] hover:bg-[var(--bg-secondary)] rounded transition-colors"
+              title="Decrease priority"
+            >
+              <ArrowDown size={12} />
+              Priority
+            </button>
+            <button
+              onClick={handleBulkDelete}
+              className="flex items-center gap-1 px-2 py-1 text-xs bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded transition-colors"
+            >
+              <Trash2 size={12} />
+              Delete
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Filter */}
       {!compact && (
-        <div className="flex items-center gap-2 mb-3">
-          <span className="text-xs text-[var(--text-secondary)]">Filter:</span>
-          <select
-            value={filterStatus}
-            onChange={(e) => setFilterStatus(e.target.value)}
-            className="px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs"
-          >
-            <option value="all">All</option>
-            <option value="pending">Pending</option>
-            <option value="running">Running</option>
-            <option value="blocked">Blocked</option>
-            <option value="completed">Completed</option>
-            <option value="failed">Failed</option>
-          </select>
+        <div className="flex items-center justify-between gap-2 mb-3 px-3">
+          <div className="flex items-center gap-2">
+            <button
+              onClick={selectedTasks.size === filteredTasks.length ? clearSelection : selectAll}
+              className="p-1 hover:bg-[var(--bg-tertiary)] rounded transition-colors"
+              title={selectedTasks.size === filteredTasks.length ? 'Deselect all' : 'Select all'}
+            >
+              {selectedTasks.size === filteredTasks.length && filteredTasks.length > 0 ? (
+                <CheckSquare size={14} className="text-[var(--accent)]" />
+              ) : (
+                <SquareIcon size={14} className="text-[var(--text-secondary)]" />
+              )}
+            </button>
+            <span className="text-xs text-[var(--text-secondary)]">Filter:</span>
+            <select
+              value={filterStatus}
+              onChange={(e) => setFilterStatus(e.target.value)}
+              className="px-2 py-1 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-xs"
+            >
+              <option value="all">All</option>
+              <option value="pending">Pending</option>
+              <option value="running">Running</option>
+              <option value="blocked">Blocked</option>
+              <option value="completed">Completed</option>
+              <option value="failed">Failed</option>
+            </select>
+          </div>
+          <span className="text-xs text-[var(--text-secondary)]">
+            Drag tasks to reorder
+          </span>
         </div>
       )}
 
@@ -249,10 +384,16 @@ export function TaskQueue({ compact = false }: TaskQueueProps) {
                 key={task.id}
                 task={task}
                 expanded={expandedTasks.has(task.id)}
+                selected={selectedTasks.has(task.id)}
+                isDragging={draggedTask === task.id}
                 onToggle={() => toggleExpand(task.id)}
+                onSelect={() => toggleSelect(task.id)}
                 onDelete={() => activeProject && deleteTask(activeProject.id, task.id)}
                 onRetry={() => activeProject && retryTask(activeProject.id, task.id)}
                 onCancel={() => activeProject && cancelTask(activeProject.id, task.id)}
+                onDragStart={() => handleDragStart(task.id)}
+                onDragOver={(e) => handleDragOver(e, task.id)}
+                onDrop={() => handleDrop(task.id)}
                 agents={agents}
                 compact={compact}
               />
@@ -280,33 +421,81 @@ export function TaskQueue({ compact = false }: TaskQueueProps) {
 interface TaskItemProps {
   task: Task
   expanded: boolean
+  selected: boolean
+  isDragging: boolean
   onToggle: () => void
+  onSelect: () => void
   onDelete: () => void
   onRetry: () => void
   onCancel: () => void
+  onDragStart: () => void
+  onDragOver: (e: React.DragEvent) => void
+  onDrop: () => void
   agents: Array<{ id: string; name: string }>
   compact?: boolean
 }
 
-function TaskItem({ task, expanded, onToggle, onDelete, onRetry, onCancel, agents, compact }: TaskItemProps) {
+function TaskItem({
+  task,
+  expanded,
+  selected,
+  isDragging,
+  onToggle,
+  onSelect,
+  onDelete,
+  onRetry,
+  onCancel,
+  onDragStart,
+  onDragOver,
+  onDrop,
+  agents,
+  compact
+}: TaskItemProps) {
   const statusConfig = STATUS_CONFIG[task.status] || STATUS_CONFIG.pending
   const priorityConfig = PRIORITY_LABELS[task.priority] || PRIORITY_LABELS[1]
   const agent = agents.find((a) => a.id === task.agent_id)
 
   return (
-    <div className={`border border-[var(--border)] rounded ${statusConfig.bg}`}>
+    <div
+      className={`border border-[var(--border)] rounded ${statusConfig.bg} ${
+        selected ? 'ring-2 ring-[var(--accent)]' : ''
+      } ${isDragging ? 'opacity-50' : ''}`}
+      draggable
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
       {/* Main row */}
       <div
         className={`flex items-center gap-2 ${compact ? 'p-2' : 'p-3'} cursor-pointer hover:bg-[var(--bg-tertiary)] transition-colors`}
-        onClick={onToggle}
       >
-        <button className="text-[var(--text-secondary)]">
+        {/* Drag handle */}
+        <div
+          className="cursor-grab text-[var(--text-secondary)] hover:text-white"
+          onMouseDown={(e) => e.stopPropagation()}
+        >
+          <GripVertical size={14} />
+        </div>
+
+        {/* Selection checkbox */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onSelect() }}
+          className="text-[var(--text-secondary)] hover:text-white"
+        >
+          {selected ? (
+            <CheckSquare size={14} className="text-[var(--accent)]" />
+          ) : (
+            <SquareIcon size={14} />
+          )}
+        </button>
+
+        <button className="text-[var(--text-secondary)]" onClick={onToggle}>
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </button>
 
         <span className={statusConfig.color}>{statusConfig.icon}</span>
 
-        <div className="flex-1 min-w-0">
+        <div className="flex-1 min-w-0" onClick={onToggle}>
           <div className="flex items-center gap-2">
             <span className={`text-xs px-1.5 py-0.5 rounded ${priorityConfig.color} bg-[var(--bg-tertiary)]`}>
               P{task.priority}

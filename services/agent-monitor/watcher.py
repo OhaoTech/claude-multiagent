@@ -60,6 +60,10 @@ class AgentMailHandler(FileSystemEventHandler):
         elif path.name.endswith("-result.md"):
             self._handle_result_file(path)
 
+        # Peer request (Phase 5D)
+        elif "peer-requests" in str(path) and path.suffix == ".json":
+            self._handle_peer_request(path)
+
     def _handle_output_file(self, path: Path):
         """Parse and broadcast agent output JSON."""
         try:
@@ -131,6 +135,27 @@ class AgentMailHandler(FileSystemEventHandler):
             self._schedule_broadcast(message)
         except Exception as e:
             print(f"Error parsing result file {path}: {e}")
+
+    def _handle_peer_request(self, path: Path):
+        """Parse and broadcast peer request (Phase 5D)."""
+        try:
+            data = json.loads(path.read_text())
+
+            message = {
+                "type": "peer_request",
+                "data": {
+                    "id": data.get("id"),
+                    "from": data.get("from"),
+                    "to": data.get("to"),
+                    "request": data.get("request", "")[:500],
+                    "status": data.get("status"),
+                    "created_at": data.get("created_at"),
+                    "file": path.name
+                }
+            }
+            self._schedule_broadcast(message)
+        except Exception as e:
+            print(f"Error parsing peer request {path}: {e}")
 
 
 class SessionHandler(FileSystemEventHandler):

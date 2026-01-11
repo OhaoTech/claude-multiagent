@@ -36,18 +36,52 @@ interface UsageData {
   period_days: number
 }
 
+interface RealtimeUsage {
+  date: string
+  today: {
+    messages: number
+    tool_calls: number
+    input_tokens: number
+    output_tokens: number
+    cache_read_tokens: number
+    cache_creation_tokens: number
+    total_tokens: number
+    sessions: number
+    estimated_cost_usd: number
+  }
+  models: Record<string, { input: number; output: number }>
+  recent_sessions: Array<{
+    session_id: string
+    project: string
+    messages: number
+    tool_calls: number
+    tokens: number
+  }>
+}
+
 export function UsageAnalytics() {
   const [usage, setUsage] = useState<UsageData | null>(null)
+  const [realtimeUsage, setRealtimeUsage] = useState<RealtimeUsage | null>(null)
   const [loading, setLoading] = useState(true)
   const [days, setDays] = useState(30)
 
   const fetchUsage = async () => {
     setLoading(true)
     try {
-      const res = await fetch(`/api/usage?days=${days}`)
-      if (res.ok) {
-        const data = await res.json()
+      // Use the accurate endpoint that scans all session files
+      const [accurateRes, realtimeRes] = await Promise.all([
+        fetch(`/api/usage/accurate?days=${days}`),
+        fetch('/api/usage/realtime')
+      ])
+
+      if (accurateRes.ok) {
+        const data = await accurateRes.json()
         setUsage(data)
+      }
+
+      if (realtimeRes.ok) {
+        const data = await realtimeRes.json()
+        setRealtimeUsage(data)
       }
     } catch (err) {
       console.error('Failed to fetch usage:', err)
@@ -59,6 +93,22 @@ export function UsageAnalytics() {
   useEffect(() => {
     fetchUsage()
   }, [days])
+
+  // Auto-refresh realtime data every 30 seconds
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch('/api/usage/realtime')
+        if (res.ok) {
+          const data = await res.json()
+          setRealtimeUsage(data)
+        }
+      } catch {
+        // Ignore errors on auto-refresh
+      }
+    }, 30000)
+    return () => clearInterval(interval)
+  }, [])
 
   if (loading && !usage) {
     return (
@@ -76,7 +126,10 @@ export function UsageAnalytics() {
     )
   }
 
-  // Calculate daily average
+  // Data is now accurate from the /api/usage/accurate endpoint
+  const todayDate = new Date().toISOString().split('T')[0]
+
+  // Calculate daily averages
   const recentDays = usage.daily_activity.length
   const avgMessagesPerDay = recentDays > 0
     ? Math.round(usage.daily_activity.reduce((sum, d) => sum + d.message_count, 0) / recentDays)
@@ -85,9 +138,11 @@ export function UsageAnalytics() {
     ? Math.round(usage.daily_activity.reduce((sum, d) => sum + d.tool_call_count, 0) / recentDays)
     : 0
 
-  // Calculate daily cost estimate (for future use)
-  const _dailyCostEstimate = usage.total_estimated_cost_usd / (usage.total_sessions || 1) * (avgMessagesPerDay / 100)
-  void _dailyCostEstimate // suppress unused warning
+  // Calculate token totals
+  const totalInputTokens = usage.models.reduce((sum, m) => sum + m.input_tokens, 0)
+  const totalOutputTokens = usage.models.reduce((sum, m) => sum + m.output_tokens, 0)
+  const totalCacheReadTokens = usage.models.reduce((sum, m) => sum + m.cache_read_tokens, 0)
+  const totalCacheCreationTokens = usage.models.reduce((sum, m) => sum + m.cache_creation_tokens, 0)
 
   // Format model name for display
   const formatModelName = (modelId: string): string => {
@@ -147,9 +202,9 @@ export function UsageAnalytics() {
         </div>
       </div>
 
-      {/* Today's Usage (Rate Limit Estimate) */}
-      {usage.daily_activity.length > 0 && (
-        <TodayUsageCard activity={usage.daily_activity[0]} />
+      {/* Today's Usage - Real-time from session files */}
+      {realtimeUsage && (
+        <RealtimeUsageCard data={realtimeUsage} />
       )}
 
       {/* Summary Cards */}
@@ -158,7 +213,7 @@ export function UsageAnalytics() {
           icon={<DollarSign size={18} />}
           label="Total Est. Cost"
           value={formatCost(usage.total_estimated_cost_usd)}
-          subtext="all time"
+          subtext={`last ${days} days`}
           color="text-green-400"
         />
         <StatCard
@@ -189,10 +244,13 @@ export function UsageAnalytics() {
         <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
           <Cpu size={16} />
           Cost by Model
+          <span className="text-[10px] px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">ACCURATE</span>
         </h3>
         <div className="space-y-3">
-          {usage.models.sort((a, b) => b.estimated_cost_usd - a.estimated_cost_usd).map((model) => {
-            const percentage = (model.estimated_cost_usd / usage.total_estimated_cost_usd) * 100
+          {usage.models.map((model) => {
+            const percentage = usage.total_estimated_cost_usd > 0
+              ? (model.estimated_cost_usd / usage.total_estimated_cost_usd) * 100
+              : 0
             return (
               <div key={model.model_id} className="space-y-1">
                 <div className="flex items-center justify-between text-sm">
@@ -225,23 +283,27 @@ export function UsageAnalytics() {
 
       {/* Daily Activity Chart */}
       <div className="bg-[var(--bg-tertiary)] rounded-lg p-4">
-        <h3 className="text-sm font-medium mb-3">Daily Activity</h3>
+        <h3 className="text-sm font-medium mb-3 flex items-center gap-2">
+          Daily Activity
+          <span className="text-[10px] px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">ACCURATE</span>
+        </h3>
         <div className="space-y-2">
           {usage.daily_activity.slice(0, 14).map((day) => {
             const maxMessages = Math.max(...usage.daily_activity.map(d => d.message_count))
             const percentage = maxMessages > 0 ? (day.message_count / maxMessages) * 100 : 0
+            const isToday = day.date === todayDate
             return (
               <div key={day.date} className="flex items-center gap-2 text-xs">
-                <span className="w-20 text-[var(--text-secondary)]">
-                  {new Date(day.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                <span className={`w-20 ${isToday ? 'text-green-400 font-medium' : 'text-[var(--text-secondary)]'}`}>
+                  {isToday ? 'Today' : new Date(day.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                 </span>
                 <div className="flex-1 h-4 bg-[var(--bg-secondary)] rounded overflow-hidden">
                   <div
-                    className="h-full bg-[var(--accent)] rounded"
+                    className={`h-full rounded ${isToday ? 'bg-green-500' : 'bg-[var(--accent)]'}`}
                     style={{ width: `${percentage}%` }}
                   />
                 </div>
-                <span className="w-16 text-right text-[var(--text-secondary)]">
+                <span className={`w-16 text-right ${isToday ? 'text-green-400' : 'text-[var(--text-secondary)]'}`}>
                   {formatNumber(day.message_count)}
                 </span>
                 <span className="w-12 text-right text-[var(--text-secondary)]">
@@ -258,25 +320,25 @@ export function UsageAnalytics() {
         <div className="bg-[var(--bg-tertiary)] rounded-lg p-3">
           <div className="text-[var(--text-secondary)] mb-1">Total Input Tokens</div>
           <div className="text-lg font-medium">
-            {formatNumber(usage.models.reduce((sum, m) => sum + m.input_tokens, 0))}
+            {formatNumber(totalInputTokens)}
           </div>
         </div>
         <div className="bg-[var(--bg-tertiary)] rounded-lg p-3">
           <div className="text-[var(--text-secondary)] mb-1">Total Output Tokens</div>
           <div className="text-lg font-medium">
-            {formatNumber(usage.models.reduce((sum, m) => sum + m.output_tokens, 0))}
+            {formatNumber(totalOutputTokens)}
           </div>
         </div>
         <div className="bg-[var(--bg-tertiary)] rounded-lg p-3">
           <div className="text-[var(--text-secondary)] mb-1">Cache Read Tokens</div>
           <div className="text-lg font-medium text-green-400">
-            {formatNumber(usage.models.reduce((sum, m) => sum + m.cache_read_tokens, 0))}
+            {formatNumber(totalCacheReadTokens)}
           </div>
         </div>
         <div className="bg-[var(--bg-tertiary)] rounded-lg p-3">
           <div className="text-[var(--text-secondary)] mb-1">Cache Creation Tokens</div>
           <div className="text-lg font-medium text-yellow-400">
-            {formatNumber(usage.models.reduce((sum, m) => sum + m.cache_creation_tokens, 0))}
+            {formatNumber(totalCacheCreationTokens)}
           </div>
         </div>
       </div>
@@ -312,12 +374,12 @@ function StatCard({
   )
 }
 
-// Today's usage card - simple counts
-function TodayUsageCard({ activity }: { activity: DailyActivity }) {
-  const todayTokens = Object.values(activity.tokens_by_model).reduce((sum, t) => sum + t, 0)
-
+// Real-time usage card - reads from session files directly
+function RealtimeUsageCard({ data }: { data: RealtimeUsage }) {
   const formatK = (n: number) => n >= 1000 ? `${(n / 1000).toFixed(1)}k` : n.toString()
   const formatM = (n: number) => n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : formatK(n)
+
+  const today = data.today
 
   return (
     <div className="bg-[var(--bg-tertiary)] rounded-lg p-4">
@@ -325,29 +387,39 @@ function TodayUsageCard({ activity }: { activity: DailyActivity }) {
         <h3 className="text-sm font-medium flex items-center gap-2">
           <Zap size={16} className="text-yellow-400" />
           Today's Usage
+          <span className="text-[10px] px-1.5 py-0.5 bg-green-500/20 text-green-400 rounded">LIVE</span>
         </h3>
         <span className="text-xs text-[var(--text-secondary)]">
-          {new Date(activity.date).toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
+          {new Date().toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
         </span>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-4 gap-3">
         <div className="text-center">
-          <div className="text-2xl font-bold text-blue-400">{formatK(activity.message_count)}</div>
+          <div className="text-2xl font-bold text-blue-400">{formatK(today.messages)}</div>
           <div className="text-xs text-[var(--text-secondary)]">Messages</div>
         </div>
         <div className="text-center">
-          <div className="text-2xl font-bold text-purple-400">{formatK(activity.tool_call_count)}</div>
+          <div className="text-2xl font-bold text-purple-400">{formatK(today.tool_calls)}</div>
           <div className="text-xs text-[var(--text-secondary)]">Tool Calls</div>
         </div>
         <div className="text-center">
-          <div className="text-2xl font-bold text-green-400">{formatM(todayTokens)}</div>
+          <div className="text-2xl font-bold text-green-400">{formatM(today.total_tokens)}</div>
           <div className="text-xs text-[var(--text-secondary)]">Tokens</div>
+        </div>
+        <div className="text-center">
+          <div className="text-2xl font-bold text-yellow-400">${today.estimated_cost_usd.toFixed(2)}</div>
+          <div className="text-xs text-[var(--text-secondary)]">Est. Cost</div>
         </div>
       </div>
 
-      <div className="mt-3 text-xs text-[var(--text-secondary)]">
-        Sessions: {activity.session_count}
+      <div className="mt-3 flex items-center justify-between text-xs text-[var(--text-secondary)]">
+        <span>{today.sessions} active session{today.sessions !== 1 ? 's' : ''}</span>
+        <div className="flex gap-3">
+          <span>In: {formatK(today.input_tokens)}</span>
+          <span>Out: {formatK(today.output_tokens)}</span>
+          <span className="text-green-400">Cache: {formatM(today.cache_read_tokens)}</span>
+        </div>
       </div>
     </div>
   )

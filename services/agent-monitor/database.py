@@ -91,11 +91,18 @@ def init_db():
                 project_id TEXT,
                 nickname TEXT,
                 is_deleted INTEGER DEFAULT 0,
+                is_permanently_deleted INTEGER DEFAULT 0,
                 deleted_at TEXT,
                 created_at TEXT NOT NULL,
                 FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
             )
         """)
+
+        # Add is_permanently_deleted column if it doesn't exist (migration)
+        try:
+            cursor.execute("ALTER TABLE session_metadata ADD COLUMN is_permanently_deleted INTEGER DEFAULT 0")
+        except sqlite3.OperationalError:
+            pass  # Column already exists
 
         # Sprints table for sprint planning
         cursor.execute("""
@@ -1285,45 +1292,80 @@ def restore_session(session_id: str) -> bool:
 
 
 def get_deleted_sessions(project_id: Optional[str] = None) -> list[dict]:
-    """Get all deleted sessions, optionally filtered by project."""
+    """Get all soft-deleted sessions (in trash), optionally filtered by project.
+
+    Does not include permanently deleted sessions.
+    """
     with get_connection() as conn:
         cursor = conn.cursor()
         if project_id:
             cursor.execute(
-                "SELECT * FROM session_metadata WHERE is_deleted = 1 AND project_id = ? ORDER BY deleted_at DESC",
+                """SELECT * FROM session_metadata
+                   WHERE is_deleted = 1 AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)
+                   AND project_id = ?
+                   ORDER BY deleted_at DESC""",
                 (project_id,)
             )
         else:
             cursor.execute(
-                "SELECT * FROM session_metadata WHERE is_deleted = 1 ORDER BY deleted_at DESC"
+                """SELECT * FROM session_metadata
+                   WHERE is_deleted = 1 AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)
+                   ORDER BY deleted_at DESC"""
             )
         return [dict(row) for row in cursor.fetchall()]
 
 
 def permanently_delete_session(session_id: str) -> bool:
-    """Permanently delete session metadata."""
+    """Permanently delete a session.
+
+    Note: We keep the metadata row with is_deleted=1 and is_permanently_deleted=1
+    to prevent the session from reappearing (since the underlying .jsonl file
+    still exists on disk in ~/.claude/projects/).
+    """
+    now = datetime.utcnow().isoformat()
     with get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("DELETE FROM session_metadata WHERE session_id = ?", (session_id,))
-        return cursor.rowcount > 0
+        # Update existing row to mark as permanently deleted
+        cursor.execute(
+            """UPDATE session_metadata
+               SET is_deleted = 1, is_permanently_deleted = 1, deleted_at = COALESCE(deleted_at, ?)
+               WHERE session_id = ?""",
+            (now, session_id)
+        )
+        if cursor.rowcount > 0:
+            return True
+        # If no row exists, create one marked as permanently deleted
+        cursor.execute("""
+            INSERT OR IGNORE INTO session_metadata
+            (session_id, is_deleted, is_permanently_deleted, deleted_at, created_at)
+            VALUES (?, 1, 1, ?, ?)
+        """, (session_id, now, now))
+        return True
 
 
 def cleanup_old_deleted_sessions(days: int = 30) -> int:
-    """Remove sessions deleted more than X days ago."""
+    """Mark sessions deleted more than X days ago as permanently deleted.
+
+    This removes them from the trash view while keeping the metadata to prevent
+    the underlying session files from reappearing in the session list.
+    """
     from datetime import timedelta
     cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
 
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute(
-            "DELETE FROM session_metadata WHERE is_deleted = 1 AND deleted_at < ?",
+            """UPDATE session_metadata
+               SET is_permanently_deleted = 1
+               WHERE is_deleted = 1 AND (is_permanently_deleted = 0 OR is_permanently_deleted IS NULL)
+               AND deleted_at < ?""",
             (cutoff,)
         )
         return cursor.rowcount
 
 
 def is_session_deleted(session_id: str) -> bool:
-    """Check if a session is in the recycle bin."""
+    """Check if a session is deleted (either in recycle bin or permanently)."""
     meta = get_session_metadata(session_id)
     return meta is not None and meta.get("is_deleted") == 1
 

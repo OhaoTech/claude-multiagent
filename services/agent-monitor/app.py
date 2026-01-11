@@ -40,6 +40,7 @@ from routes import (
     settings,
     usage,
     brainstorm,
+    terminal,
 )
 
 # Global watchers
@@ -130,6 +131,7 @@ app.include_router(chat.router)
 app.include_router(settings.router)
 app.include_router(usage.router)
 app.include_router(brainstorm.router)
+app.include_router(terminal.router)
 
 # Add sync-worktrees endpoint at project level (not under agents)
 from routes.agents import sync_worktrees

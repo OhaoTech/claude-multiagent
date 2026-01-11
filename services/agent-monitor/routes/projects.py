@@ -1,5 +1,6 @@
 """Project CRUD endpoints."""
 
+import subprocess
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -38,6 +39,28 @@ async def create_project(request: ProjectCreate):
     existing = db.get_project_by_path(request.root_path)
     if existing:
         raise HTTPException(status_code=400, detail="Project with this path already exists")
+
+    # Check if it's a git repo, init if requested
+    is_git_repo = (root_path / ".git").exists()
+    if not is_git_repo:
+        if request.init_git:
+            try:
+                subprocess.run(
+                    ["git", "init"],
+                    cwd=str(root_path),
+                    check=True,
+                    capture_output=True,
+                )
+            except subprocess.CalledProcessError as e:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to initialize git repository: {e.stderr.decode() if e.stderr else str(e)}"
+                )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Selected directory is not a git repository. Enable 'Initialize git repository' to create one."
+            )
 
     project = db.create_project(request.name, request.root_path, request.description)
 

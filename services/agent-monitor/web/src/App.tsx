@@ -1,8 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import { Header } from './components/layout/Header'
 import { Sidebar } from './components/layout/Sidebar'
 import { EditorTabs } from './components/editor/EditorTabs'
-import { Terminal } from './components/editor/Terminal'
+import { TerminalTabs } from './components/editor/TerminalTabs'
 import { ChatPanel } from './components/chat/ChatPanel'
 import { ProjectDashboard } from './components/projects/ProjectDashboard'
 import { MonitorView } from './components/monitor/MonitorView'
@@ -23,6 +23,8 @@ const STORAGE_VIEW = 'cc-ide-view'
 const STORAGE_PROJECT = 'cc-ide-project'
 const STORAGE_TAB = 'cc-ide-tab'
 const STORAGE_SIDEBAR = 'cc-ide-sidebar'
+const STORAGE_SIDEBAR_WIDTH = 'cc-ide-sidebar-width'
+const STORAGE_CHAT_WIDTH = 'cc-ide-chat-width'
 const STORAGE_TERMINAL = 'cc-ide-terminal'
 const STORAGE_TERMINAL_HEIGHT = 'cc-ide-terminal-height'
 
@@ -44,6 +46,14 @@ function App() {
     const saved = localStorage.getItem(STORAGE_SIDEBAR)
     return saved !== 'false'
   })
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_SIDEBAR_WIDTH)
+    return saved ? parseInt(saved) : 220
+  })
+  const [chatPanelWidth, setChatPanelWidth] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_CHAT_WIDTH)
+    return saved ? parseInt(saved) : 340
+  })
   const [showTerminal, setShowTerminal] = useState(() => {
     const saved = localStorage.getItem(STORAGE_TERMINAL)
     return saved === 'true'
@@ -53,9 +63,14 @@ function App() {
     return saved ? parseInt(saved) : 200
   })
 
+  // Drag state refs
+  const sidebarDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const chatDragRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const [isDragging, setIsDragging] = useState<'sidebar' | 'chat' | null>(null)
+
   const isMobile = useIsMobile()
 
-  const { fetchProjects, fetchSettings, activeProject, settings, selectProject } = useProjectStore()
+  const { fetchProjects, fetchSettings, activeProject, selectProject } = useProjectStore()
   const { fetchFileTree } = useEditorStore()
   const { connect, disconnect } = useWsStore()
   const { activeSession, restoreSession, isStreaming } = useChatStore()
@@ -103,6 +118,14 @@ function App() {
   }, [showSidebar])
 
   useEffect(() => {
+    localStorage.setItem(STORAGE_SIDEBAR_WIDTH, sidebarWidth.toString())
+  }, [sidebarWidth])
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_CHAT_WIDTH, chatPanelWidth.toString())
+  }, [chatPanelWidth])
+
+  useEffect(() => {
     localStorage.setItem(STORAGE_TERMINAL, showTerminal.toString())
   }, [showTerminal])
 
@@ -132,6 +155,63 @@ function App() {
     }
   }, [activeSession, restoreSession, isStreaming])
 
+  // Sidebar drag handlers
+  const handleSidebarDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    sidebarDragRef.current = { startX: e.clientX, startWidth: sidebarWidth }
+    setIsDragging('sidebar')
+  }, [sidebarWidth])
+
+  const handleSidebarDrag = useCallback((e: MouseEvent) => {
+    if (!sidebarDragRef.current) return
+    const delta = e.clientX - sidebarDragRef.current.startX
+    const newWidth = Math.max(150, Math.min(500, sidebarDragRef.current.startWidth + delta))
+    setSidebarWidth(newWidth)
+  }, [])
+
+  const handleSidebarDragEnd = useCallback(() => {
+    sidebarDragRef.current = null
+    setIsDragging(null)
+  }, [])
+
+  // Chat panel drag handlers
+  const handleChatDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    chatDragRef.current = { startX: e.clientX, startWidth: chatPanelWidth }
+    setIsDragging('chat')
+  }, [chatPanelWidth])
+
+  const handleChatDrag = useCallback((e: MouseEvent) => {
+    if (!chatDragRef.current) return
+    const delta = chatDragRef.current.startX - e.clientX
+    const newWidth = Math.max(250, Math.min(600, chatDragRef.current.startWidth + delta))
+    setChatPanelWidth(newWidth)
+  }, [])
+
+  const handleChatDragEnd = useCallback(() => {
+    chatDragRef.current = null
+    setIsDragging(null)
+  }, [])
+
+  // Global mouse event handlers for dragging
+  useEffect(() => {
+    if (isDragging === 'sidebar') {
+      document.addEventListener('mousemove', handleSidebarDrag)
+      document.addEventListener('mouseup', handleSidebarDragEnd)
+      return () => {
+        document.removeEventListener('mousemove', handleSidebarDrag)
+        document.removeEventListener('mouseup', handleSidebarDragEnd)
+      }
+    } else if (isDragging === 'chat') {
+      document.addEventListener('mousemove', handleChatDrag)
+      document.addEventListener('mouseup', handleChatDragEnd)
+      return () => {
+        document.removeEventListener('mousemove', handleChatDrag)
+        document.removeEventListener('mouseup', handleChatDragEnd)
+      }
+    }
+  }, [isDragging, handleSidebarDrag, handleSidebarDragEnd, handleChatDrag, handleChatDragEnd])
+
   const handleEnterProject = async (projectId: string) => {
     await selectProject(projectId)
     setView('ide')
@@ -154,10 +234,6 @@ function App() {
   if (view === 'dashboard') {
     return <ProjectDashboard onEnterProject={handleEnterProject} />
   }
-
-  // IDE view
-  const sidebarWidth = settings?.sidebar_width || 220
-  const chatPanelWidth = settings?.chat_panel_width || 300
 
   // Mobile layout
   if (isMobile) {
@@ -206,7 +282,7 @@ function App() {
 
   // Desktop layout
   return (
-    <div className="h-screen w-screen flex flex-col overflow-hidden">
+    <div className={`h-screen w-screen flex flex-col overflow-hidden ${isDragging ? 'select-none' : ''}`}>
       <Header
         onSettingsClick={() => setShowSettings(true)}
         onSkillsClick={() => setShowSkills(true)}
@@ -230,23 +306,31 @@ function App() {
               </button>
             )}
             {showSidebar && (
-              <div className="flex flex-col h-full" style={{ width: sidebarWidth }}>
-                <div className="flex-1 overflow-hidden">
-                  <Sidebar width="100%" />
+              <div className="flex h-full" style={{ width: sidebarWidth }}>
+                <div className="flex flex-col flex-1 overflow-hidden">
+                  <div className="flex-1 overflow-hidden">
+                    <Sidebar width="100%" />
+                  </div>
+                  <button
+                    onClick={() => setShowSidebar(false)}
+                    className="h-6 flex items-center justify-center bg-[var(--bg-secondary)] border-r border-t border-[var(--border)] hover:bg-[var(--bg-tertiary)] transition-colors flex-shrink-0"
+                    title="Hide sidebar"
+                  >
+                    <PanelLeftClose size={14} className="text-[var(--text-secondary)]" />
+                  </button>
                 </div>
-                <button
-                  onClick={() => setShowSidebar(false)}
-                  className="h-6 flex items-center justify-center bg-[var(--bg-secondary)] border-r border-t border-[var(--border)] hover:bg-[var(--bg-tertiary)] transition-colors flex-shrink-0"
-                  title="Hide sidebar"
-                >
-                  <PanelLeftClose size={14} className="text-[var(--text-secondary)]" />
-                </button>
+                {/* Sidebar resize handle */}
+                <div
+                  className="w-1 cursor-col-resize hover:bg-[var(--accent)] transition-colors flex-shrink-0"
+                  onMouseDown={handleSidebarDragStart}
+                  style={{ backgroundColor: isDragging === 'sidebar' ? 'var(--accent)' : undefined }}
+                />
               </div>
             )}
             <div className="flex-1 flex flex-col overflow-hidden">
               <EditorTabs />
               {showTerminal && (
-                <Terminal
+                <TerminalTabs
                   height={terminalHeight}
                   onClose={() => setShowTerminal(false)}
                   onHeightChange={setTerminalHeight}
@@ -257,6 +341,13 @@ function App() {
         ) : (
           <MonitorView />
         )}
+
+        {/* Chat panel resize handle */}
+        <div
+          className="w-1 cursor-col-resize hover:bg-[var(--accent)] transition-colors flex-shrink-0"
+          onMouseDown={handleChatDragStart}
+          style={{ backgroundColor: isDragging === 'chat' ? 'var(--accent)' : undefined }}
+        />
         <ChatPanel width={chatPanelWidth} />
       </div>
 
