@@ -39,7 +39,8 @@ export function SessionPicker({
 
   const fetchSessions = async () => {
     try {
-      const res = await fetch(`/api/sessions/${agentName}`)
+      // Add cache-busting timestamp
+      const res = await fetch(`/api/sessions/${agentName}?_t=${Date.now()}`)
       const data = await res.json()
       setSessions(data)
     } catch {
@@ -51,7 +52,8 @@ export function SessionPicker({
 
   const fetchTrashedSessions = async () => {
     try {
-      const res = await fetch('/api/sessions/trash')
+      // Add cache-busting timestamp
+      const res = await fetch(`/api/sessions/trash?_t=${Date.now()}`)
       const data = await res.json()
       setTrashedSessions(data)
     } catch {
