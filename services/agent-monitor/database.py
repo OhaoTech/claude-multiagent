@@ -84,6 +84,19 @@ def init_db():
             )
         """)
 
+        # Session metadata table (nicknames, soft-delete for recycle bin)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS session_metadata (
+                session_id TEXT PRIMARY KEY,
+                project_id TEXT,
+                nickname TEXT,
+                is_deleted INTEGER DEFAULT 0,
+                deleted_at TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            )
+        """)
+
         # Sprints table for sprint planning
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS sprints (
@@ -347,7 +360,7 @@ def list_agents(project_id: str) -> list[dict]:
 
 def update_agent(agent_id: str, **kwargs) -> Optional[dict]:
     """Update an agent."""
-    allowed_fields = {"name", "domain", "worktree_path", "status"}
+    allowed_fields = {"name", "domain", "worktree_path", "status", "nickname"}
     updates = {k: v for k, v in kwargs.items() if k in allowed_fields}
 
     if not updates:
@@ -1190,6 +1203,137 @@ def delete_company_plan(plan_id: str) -> bool:
         cursor = conn.cursor()
         cursor.execute("DELETE FROM company_plans WHERE id = ?", (plan_id,))
         return cursor.rowcount > 0
+
+
+# =============================================================================
+# Session Metadata Operations
+# =============================================================================
+
+def get_session_metadata(session_id: str) -> Optional[dict]:
+    """Get metadata for a session."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM session_metadata WHERE session_id = ?", (session_id,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
+def upsert_session_metadata(
+    session_id: str,
+    project_id: Optional[str] = None,
+    nickname: Optional[str] = None
+) -> dict:
+    """Create or update session metadata."""
+    now = datetime.utcnow().isoformat()
+    existing = get_session_metadata(session_id)
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if existing:
+            updates = []
+            params = []
+            if nickname is not None:
+                updates.append("nickname = ?")
+                params.append(nickname)
+            if project_id is not None:
+                updates.append("project_id = ?")
+                params.append(project_id)
+            if updates:
+                params.append(session_id)
+                cursor.execute(
+                    f"UPDATE session_metadata SET {', '.join(updates)} WHERE session_id = ?",
+                    params
+                )
+        else:
+            cursor.execute("""
+                INSERT INTO session_metadata (session_id, project_id, nickname, created_at)
+                VALUES (?, ?, ?, ?)
+            """, (session_id, project_id, nickname, now))
+
+    return get_session_metadata(session_id)
+
+
+def soft_delete_session(session_id: str) -> bool:
+    """Soft delete a session (move to recycle bin)."""
+    now = datetime.utcnow().isoformat()
+    existing = get_session_metadata(session_id)
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if existing:
+            cursor.execute(
+                "UPDATE session_metadata SET is_deleted = 1, deleted_at = ? WHERE session_id = ?",
+                (now, session_id)
+            )
+        else:
+            cursor.execute("""
+                INSERT INTO session_metadata (session_id, is_deleted, deleted_at, created_at)
+                VALUES (?, 1, ?, ?)
+            """, (session_id, now, now))
+        return True
+
+
+def restore_session(session_id: str) -> bool:
+    """Restore a session from recycle bin."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "UPDATE session_metadata SET is_deleted = 0, deleted_at = NULL WHERE session_id = ?",
+            (session_id,)
+        )
+        return cursor.rowcount > 0
+
+
+def get_deleted_sessions(project_id: Optional[str] = None) -> list[dict]:
+    """Get all deleted sessions, optionally filtered by project."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if project_id:
+            cursor.execute(
+                "SELECT * FROM session_metadata WHERE is_deleted = 1 AND project_id = ? ORDER BY deleted_at DESC",
+                (project_id,)
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM session_metadata WHERE is_deleted = 1 ORDER BY deleted_at DESC"
+            )
+        return [dict(row) for row in cursor.fetchall()]
+
+
+def permanently_delete_session(session_id: str) -> bool:
+    """Permanently delete session metadata."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM session_metadata WHERE session_id = ?", (session_id,))
+        return cursor.rowcount > 0
+
+
+def cleanup_old_deleted_sessions(days: int = 30) -> int:
+    """Remove sessions deleted more than X days ago."""
+    from datetime import timedelta
+    cutoff = (datetime.utcnow() - timedelta(days=days)).isoformat()
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            "DELETE FROM session_metadata WHERE is_deleted = 1 AND deleted_at < ?",
+            (cutoff,)
+        )
+        return cursor.rowcount
+
+
+def is_session_deleted(session_id: str) -> bool:
+    """Check if a session is in the recycle bin."""
+    meta = get_session_metadata(session_id)
+    return meta is not None and meta.get("is_deleted") == 1
+
+
+def get_all_session_metadata() -> dict[str, dict]:
+    """Get all session metadata as a dict keyed by session_id."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM session_metadata")
+        return {row["session_id"]: dict(row) for row in cursor.fetchall()}
 
 
 # Initialize database on import
