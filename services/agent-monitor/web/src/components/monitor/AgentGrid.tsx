@@ -15,7 +15,7 @@ export function AgentGrid({ onAgentSelect, selectedAgent }: AgentGridProps) {
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<string | null>(null)
   const { agentStates } = useWsStore()
-  const { agents: dbAgents, activeProject, createAgent, syncWorktrees } = useProjectStore()
+  const { agents: dbAgents, activeProject, createAgent, syncWorktrees, setLeader, deleteAgent } = useProjectStore()
 
   const handleSyncWorktrees = async () => {
     if (!activeProject || syncing) return
@@ -37,7 +37,8 @@ export function AgentGrid({ onAgentSelect, selectedAgent }: AgentGridProps) {
   }
 
   // Merge DB agents with real-time state
-  const mergedAgents: AgentState[] = dbAgents.map((a) => ({
+  const mergedAgents: (AgentState & { id?: string })[] = dbAgents.map((a) => ({
+    id: a.id,
     agent: a.name,
     state: agentStates[a.name]?.state || 'idle',
     run_count: agentStates[a.name]?.run_count || 0,
@@ -46,10 +47,10 @@ export function AgentGrid({ onAgentSelect, selectedAgent }: AgentGridProps) {
   }))
 
   // Add any agents from WS that aren't in DB (legacy support)
-  // Filter out undefined/empty agent names
+  // These won't have an id, so context menu actions will be disabled
   Object.values(agentStates).forEach((wsAgent) => {
     if (wsAgent.agent && !mergedAgents.find((a) => a.agent === wsAgent.agent)) {
-      mergedAgents.push(wsAgent)
+      mergedAgents.push({ ...wsAgent, id: undefined })
     }
   })
 
@@ -57,6 +58,24 @@ export function AgentGrid({ onAgentSelect, selectedAgent }: AgentGridProps) {
     if (!activeProject) return
     await createAgent(activeProject.id, name, domain)
     setShowAddModal(false)
+  }
+
+  const handleSetLeader = async (agentId: string) => {
+    if (!activeProject) return
+    try {
+      await setLeader(activeProject.id, agentId)
+    } catch (err: any) {
+      console.error('Failed to set leader:', err.message)
+    }
+  }
+
+  const handleRemoveAgent = async (agentId: string, removeWorktree: boolean) => {
+    if (!activeProject) return
+    try {
+      await deleteAgent(activeProject.id, agentId, removeWorktree)
+    } catch (err: any) {
+      console.error('Failed to remove agent:', err.message)
+    }
   }
 
   return (
@@ -85,6 +104,8 @@ export function AgentGrid({ onAgentSelect, selectedAgent }: AgentGridProps) {
             agent={agent}
             isSelected={selectedAgent === agent.agent}
             onClick={() => onAgentSelect(agent.agent)}
+            onSetLeader={agent.id ? () => handleSetLeader(agent.id!) : undefined}
+            onRemove={agent.id ? (removeWorktree) => handleRemoveAgent(agent.id!, removeWorktree) : undefined}
           />
         ))}
 

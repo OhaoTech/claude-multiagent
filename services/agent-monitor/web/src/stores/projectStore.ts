@@ -18,7 +18,8 @@ interface ProjectState {
   deleteProject: (projectId: string) => Promise<void>
   fetchAgents: (projectId: string) => Promise<void>
   createAgent: (projectId: string, name: string, domain: string) => Promise<Agent>
-  deleteAgent: (projectId: string, agentId: string) => Promise<void>
+  deleteAgent: (projectId: string, agentId: string, removeWorktree?: boolean) => Promise<void>
+  setLeader: (projectId: string, agentId: string) => Promise<Agent>
   syncWorktrees: (projectId: string) => Promise<{ created: number; skipped: number }>
   fetchSettings: () => Promise<void>
   updateSettings: (settings: Partial<GlobalSettings>) => Promise<void>
@@ -119,9 +120,35 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     return agent
   },
 
-  deleteAgent: async (projectId: string, agentId: string) => {
-    await fetch(`/api/projects/${projectId}/agents/${agentId}`, { method: 'DELETE' })
+  deleteAgent: async (projectId: string, agentId: string, removeWorktree = true) => {
+    const res = await fetch(
+      `/api/projects/${projectId}/agents/${agentId}?remove_worktree=${removeWorktree}`,
+      { method: 'DELETE' }
+    )
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.detail || 'Failed to delete agent')
+    }
     set(state => ({ agents: state.agents.filter(a => a.id !== agentId) }))
+  },
+
+  setLeader: async (projectId: string, agentId: string) => {
+    const res = await fetch(`/api/projects/${projectId}/agents/${agentId}/set-leader`, {
+      method: 'POST',
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.detail || 'Failed to set leader')
+    }
+    const agent = await res.json()
+    // Update all agents - new leader has is_leader=true, others have is_leader=false
+    set(state => ({
+      agents: state.agents.map(a => ({
+        ...a,
+        is_leader: a.id === agentId,
+      })),
+    }))
+    return agent
   },
 
   syncWorktrees: async (projectId: string) => {

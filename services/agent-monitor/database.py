@@ -143,6 +143,22 @@ def init_db():
             )
         """)
 
+        # Company plans table for Phase 5 brainstorm
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS company_plans (
+                id TEXT PRIMARY KEY,
+                project_id TEXT NOT NULL,
+                description TEXT NOT NULL,
+                agents TEXT NOT NULL,
+                first_sprint TEXT NOT NULL,
+                architecture_notes TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                approved_at TEXT,
+                FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE CASCADE
+            )
+        """)
+
         # Initialize default global settings if not exist
         default_settings = {
             "theme": "dark",
@@ -152,6 +168,7 @@ def init_db():
             "auto_save": "true",
             "sidebar_width": "220",
             "chat_panel_width": "300",
+            "model": "sonnet",  # haiku, sonnet, opus
         }
 
         for key, value in default_settings.items():
@@ -278,7 +295,8 @@ def create_agent(
     project_id: str,
     name: str,
     domain: str,
-    worktree_path: Optional[str] = None
+    worktree_path: Optional[str] = None,
+    is_leader: bool = False
 ) -> dict:
     """Create a new agent for a project."""
     agent_id = str(uuid.uuid4())
@@ -288,8 +306,8 @@ def create_agent(
         cursor = conn.cursor()
         cursor.execute("""
             INSERT INTO agents (id, project_id, name, domain, worktree_path, status, is_leader, created_at)
-            VALUES (?, ?, ?, ?, ?, 'active', 0, ?)
-        """, (agent_id, project_id, name, domain, worktree_path, now))
+            VALUES (?, ?, ?, ?, ?, 'active', ?, ?)
+        """, (agent_id, project_id, name, domain, worktree_path, 1 if is_leader else 0, now))
 
     return get_agent(agent_id)
 
@@ -345,15 +363,44 @@ def update_agent(agent_id: str, **kwargs) -> Optional[dict]:
     return get_agent(agent_id)
 
 
-def delete_agent(agent_id: str) -> bool:
-    """Delete an agent (cannot delete leader)."""
+def delete_agent(agent_id: str, force: bool = False) -> bool:
+    """Delete an agent. If force=True, can delete even leader."""
     with get_connection() as conn:
         cursor = conn.cursor()
+        if force:
+            cursor.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+        else:
+            cursor.execute(
+                "DELETE FROM agents WHERE id = ? AND is_leader = 0",
+                (agent_id,)
+            )
+        return cursor.rowcount > 0
+
+
+def set_leader(project_id: str, agent_id: str) -> Optional[dict]:
+    """Set an agent as the leader (removes leader status from others)."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        # First, verify the agent exists and belongs to the project
         cursor.execute(
-            "DELETE FROM agents WHERE id = ? AND is_leader = 0",
+            "SELECT id FROM agents WHERE id = ? AND project_id = ?",
+            (agent_id, project_id)
+        )
+        if not cursor.fetchone():
+            return None
+
+        # Remove leader status from all agents in the project
+        cursor.execute(
+            "UPDATE agents SET is_leader = 0 WHERE project_id = ?",
+            (project_id,)
+        )
+        # Set the new leader
+        cursor.execute(
+            "UPDATE agents SET is_leader = 1 WHERE id = ?",
             (agent_id,)
         )
-        return cursor.rowcount > 0
+
+    return get_agent(agent_id)
 
 
 # =============================================================================
@@ -1037,6 +1084,112 @@ def get_agent_task_history(agent_id: str, limit: int = 20) -> list[dict]:
         """, (agent_id, limit))
 
         return [dict(row) for row in cursor.fetchall()]
+
+
+# =============================================================================
+# Company Plans Operations (Phase 5 Brainstorm)
+# =============================================================================
+
+def create_company_plan(
+    project_id: str,
+    description: str,
+    agents: list[dict],
+    first_sprint: list[dict],
+    architecture_notes: Optional[str] = None
+) -> dict:
+    """Create a new company plan from brainstorm."""
+    plan_id = str(uuid.uuid4())
+    now = datetime.utcnow().isoformat()
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO company_plans (
+                id, project_id, description, agents, first_sprint,
+                architecture_notes, status, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+        """, (
+            plan_id, project_id, description,
+            json.dumps(agents), json.dumps(first_sprint),
+            architecture_notes, now
+        ))
+
+    return get_company_plan(plan_id)
+
+
+def get_company_plan(plan_id: str) -> Optional[dict]:
+    """Get a company plan by ID."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM company_plans WHERE id = ?", (plan_id,))
+        row = cursor.fetchone()
+        if row:
+            data = dict(row)
+            data["agents"] = json.loads(data["agents"])
+            data["first_sprint"] = json.loads(data["first_sprint"])
+            return data
+    return None
+
+
+def list_company_plans(project_id: str, status: Optional[str] = None) -> list[dict]:
+    """List company plans for a project."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        if status:
+            cursor.execute(
+                "SELECT * FROM company_plans WHERE project_id = ? AND status = ? ORDER BY created_at DESC",
+                (project_id, status)
+            )
+        else:
+            cursor.execute(
+                "SELECT * FROM company_plans WHERE project_id = ? ORDER BY created_at DESC",
+                (project_id,)
+            )
+
+        results = []
+        for row in cursor.fetchall():
+            data = dict(row)
+            data["agents"] = json.loads(data["agents"])
+            data["first_sprint"] = json.loads(data["first_sprint"])
+            results.append(data)
+        return results
+
+
+def update_company_plan(plan_id: str, **updates) -> Optional[dict]:
+    """Update a company plan."""
+    if not updates:
+        return get_company_plan(plan_id)
+
+    # Convert lists to JSON strings
+    if "agents" in updates:
+        updates["agents"] = json.dumps(updates["agents"])
+    if "first_sprint" in updates:
+        updates["first_sprint"] = json.dumps(updates["first_sprint"])
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates.keys())
+
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute(
+            f"UPDATE company_plans SET {set_clause} WHERE id = ?",
+            (*updates.values(), plan_id)
+        )
+
+    return get_company_plan(plan_id)
+
+
+def approve_company_plan(plan_id: str) -> Optional[dict]:
+    """Approve a company plan."""
+    now = datetime.utcnow().isoformat()
+    return update_company_plan(plan_id, status="approved", approved_at=now)
+
+
+def delete_company_plan(plan_id: str) -> bool:
+    """Delete a company plan."""
+    with get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM company_plans WHERE id = ?", (plan_id,))
+        return cursor.rowcount > 0
 
 
 # Initialize database on import

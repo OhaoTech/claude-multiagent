@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useState, useRef } from 'react'
 import {
   ReactFlow,
   Background,
@@ -13,7 +13,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import dagre from 'dagre'
-import { RefreshCw } from 'lucide-react'
+import { RefreshCw, Trash2, AlertTriangle } from 'lucide-react'
 
 import { AgentNode, type AgentNodeData } from './AgentNode'
 import { useWsStore, type TeamState } from '../../stores/wsStore'
@@ -188,12 +188,29 @@ interface TeamNetworkViewProps {
 }
 
 export function TeamNetworkView({ onAgentSelect, selectedAgent }: TeamNetworkViewProps) {
-  const { teamState, fetchTeamState } = useWsStore()
+  const { teamState, fetchTeamState, removeTeamAgent } = useWsStore()
   const { activeProject, agents: dbAgents } = useProjectStore()
   const isMobile = useIsMobile()
 
   const [nodes, setNodes, onNodesChange] = useNodesState<Node>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+
+  // Context menu state
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; agentName: string; isStale: boolean } | null>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  // Close context menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as HTMLElement)) {
+        setContextMenu(null)
+      }
+    }
+    if (contextMenu) {
+      document.addEventListener('mousedown', handleClickOutside)
+      return () => document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [contextMenu])
 
   // Fetch team state on mount and when project changes
   useEffect(() => {
@@ -219,6 +236,38 @@ export function TeamNetworkView({ onAgentSelect, selectedAgent }: TeamNetworkVie
     [onAgentSelect, selectedAgent]
   )
 
+  // Check if agent only exists in team-state (not in database)
+  const isStaleAgent = useCallback(
+    (agentName: string) => {
+      return !dbAgents.some((a) => a.name === agentName)
+    },
+    [dbAgents]
+  )
+
+  const onNodeContextMenu = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      event.preventDefault()
+      const agentName = node.id
+      setContextMenu({
+        x: event.clientX,
+        y: event.clientY,
+        agentName,
+        isStale: isStaleAgent(agentName),
+      })
+    },
+    [isStaleAgent]
+  )
+
+  const handleRemoveFromTeamState = useCallback(async () => {
+    if (!contextMenu || !activeProject?.id) return
+    try {
+      await removeTeamAgent(activeProject.id, contextMenu.agentName)
+      setContextMenu(null)
+    } catch (err: any) {
+      console.error('Failed to remove agent:', err.message)
+    }
+  }, [contextMenu, activeProject?.id, removeTeamAgent])
+
   const handleRefresh = useCallback(() => {
     if (activeProject?.id) {
       fetchTeamState(activeProject.id)
@@ -237,6 +286,7 @@ export function TeamNetworkView({ onAgentSelect, selectedAgent }: TeamNetworkVie
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onNodeClick={onNodeClick}
+        onNodeContextMenu={onNodeContextMenu}
         nodeTypes={nodeTypes}
         fitView
         fitViewOptions={{ padding: isMobile ? 0.1 : 0.2 }}
@@ -340,6 +390,39 @@ export function TeamNetworkView({ onAgentSelect, selectedAgent }: TeamNetworkVie
           </div>
         </Panel>
       </ReactFlow>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          ref={menuRef}
+          className="fixed z-50 bg-[var(--bg-secondary)] border border-[var(--border)] rounded-lg shadow-xl py-1 min-w-[180px]"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+        >
+          <div className="px-3 py-2 text-sm font-medium border-b border-[var(--border)]">
+            {contextMenu.agentName}
+          </div>
+
+          {contextMenu.isStale ? (
+            <>
+              <div className="px-3 py-2 text-xs text-yellow-500 flex items-center gap-2">
+                <AlertTriangle size={12} />
+                Not in database (stale entry)
+              </div>
+              <button
+                onClick={handleRemoveFromTeamState}
+                className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 text-red-400 hover:bg-red-900/20 transition-colors"
+              >
+                <Trash2 size={14} />
+                Remove from team-state
+              </button>
+            </>
+          ) : (
+            <div className="px-3 py-2 text-xs text-[var(--text-secondary)]">
+              Agent exists in database
+            </div>
+          )}
+        </div>
+      )}
     </div>
   )
 }

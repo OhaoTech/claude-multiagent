@@ -57,6 +57,7 @@ interface WsState {
   updateAgentState: (agent: string, state: Partial<AgentState>) => void
   fetchTeamState: (projectId: string) => Promise<void>
   setTeamState: (state: TeamState) => void
+  removeTeamAgent: (projectId: string, agentName: string) => Promise<void>
 }
 
 const MAX_ACTIVITY_ITEMS = 50
@@ -163,6 +164,28 @@ export const useWsStore = create<WsState>((set, get) => ({
 
   setTeamState: (state: TeamState) => {
     set({ teamState: state })
+  },
+
+  removeTeamAgent: async (projectId: string, agentName: string) => {
+    const res = await fetch(`/api/projects/${projectId}/team-state/agents/${agentName}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.detail || 'Failed to remove agent from team state')
+    }
+    // Update local state
+    set((state) => {
+      if (!state.teamState?.agents) return state
+      const newAgents = { ...state.teamState.agents }
+      delete newAgents[agentName]
+      return {
+        teamState: {
+          ...state.teamState,
+          agents: newAgents,
+        },
+      }
+    })
   },
 }))
 
