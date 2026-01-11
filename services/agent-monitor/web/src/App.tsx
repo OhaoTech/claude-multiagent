@@ -249,17 +249,17 @@ function App() {
         />
 
         {/* Single panel based on active mobile tab */}
-        <div className="flex-1 min-h-0 overflow-hidden" style={{ paddingBottom: '56px' }}>
+        <div className="flex-1 min-h-0 overflow-y-auto" style={{ paddingBottom: '56px' }}>
           {mobileTab === 'files' && (
             <Sidebar width="100%" onFileOpen={() => setMobileTab('editor')} />
           )}
           {mobileTab === 'editor' && (
-            <div className="h-full w-full overflow-hidden">
+            <div className="h-full w-full overflow-y-auto">
               <EditorTabs />
             </div>
           )}
           {mobileTab === 'monitor' && (
-            <div className="h-full w-full overflow-hidden">
+            <div className="h-full w-full overflow-y-auto">
               <MonitorView />
             </div>
           )}

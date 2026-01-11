@@ -41,7 +41,7 @@ export function MonitorView() {
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden bg-[var(--bg-primary)]">
+    <div className={`flex-1 flex flex-col bg-[var(--bg-primary)] ${isMobile ? 'overflow-y-auto' : 'overflow-hidden'}`}>
       {/* State Banner with View Toggle */}
       <div className={`flex items-center justify-between border-b border-[var(--border)] ${isMobile ? 'flex-col' : ''}`}>
         <StateBanner />
@@ -67,7 +67,7 @@ export function MonitorView() {
       </div>
 
       {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
+      <div className={`flex-1 flex flex-col ${isMobile ? 'overflow-visible' : 'overflow-hidden'}`}>
         {viewMode === 'grid' && (
           <>
             {/* Agent Grid */}
