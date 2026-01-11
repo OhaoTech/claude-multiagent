@@ -1,8 +1,8 @@
 """Chat endpoints and WebSocket handlers."""
 
 import asyncio
-import time
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -54,15 +54,23 @@ async def chat_websocket(websocket: WebSocket, chat_id: str):
         settings = db.get_settings()
         model = init_data.get("model") or settings.get("model", "sonnet")
 
-        if not session_id:
-            session_id = str(uuid.uuid4())
+        # For new sessions, don't pass session_id - let Claude create one
+        # We'll capture Claude's real session ID from output
+        is_new_session = session_id is None
+        if is_new_session:
+            resume = False
+            # Don't generate fake UUID - we'll get real one from Claude
 
         if not message and not images:
             await websocket.send_json({"type": "error", "message": "No message provided"})
             return
 
-        runner = ClaudeRunner(agent)
-        print(f"[CHAT] Starting Claude runner for agent={agent}, workdir={runner.workdir}, images={len(images)}, mode={mode}, model={model}, session_id={session_id}")
+        # Get active project's root path
+        project = db.get_active_project()
+        project_root = Path(project["root_path"]) if project else None
+
+        runner = ClaudeRunner(agent, project_root)
+        print(f"[CHAT] Starting Claude runner for agent={agent}, workdir={runner.workdir}, images={len(images)}, mode={mode}, model={model}, session_id={session_id}, is_new={is_new_session}, resume={resume}")
 
         await websocket.send_json({
             "type": "chat_start",
@@ -71,14 +79,32 @@ async def chat_websocket(websocket: WebSocket, chat_id: str):
             "image_count": len(images),
             "mode": mode,
             "model": model,
-            "session_id": session_id
+            "session_id": session_id  # Will be None for new sessions
         })
 
+        # Track Claude's real session ID from output
+        real_session_id = None
         output_count = 0
+
         async for output in runner.run_chat(message, session_id, resume, images=images, mode=mode, model=model):
             output_count += 1
             output_type = output.get('type')
             print(f"[CHAT] Output #{output_count}: type={output_type}")
+
+            # Capture real session ID from Claude's output
+            # Claude outputs sessionId in init/system messages
+            if not real_session_id:
+                if output.get('sessionId'):
+                    real_session_id = output['sessionId']
+                    print(f"[CHAT] Captured real session ID: {real_session_id}")
+                elif output.get('session_id'):
+                    real_session_id = output['session_id']
+                    print(f"[CHAT] Captured real session ID: {real_session_id}")
+
+            # Add real session_id to output if we have it
+            if real_session_id and 'session_id' not in output:
+                output['session_id'] = real_session_id
+
             await websocket.send_json(output)
 
             if output_type == "permission_request":
@@ -118,8 +144,8 @@ async def chat_websocket(websocket: WebSocket, chat_id: str):
                 except asyncio.TimeoutError:
                     pass
 
-        print(f"[CHAT] Done streaming, total outputs: {output_count}")
-        await websocket.send_json({"type": "chat_done"})
+        print(f"[CHAT] Done streaming, total outputs: {output_count}, session_id: {real_session_id}")
+        await websocket.send_json({"type": "chat_done", "session_id": real_session_id})
 
     except WebSocketDisconnect:
         if runner:
