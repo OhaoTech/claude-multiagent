@@ -4,6 +4,13 @@ import type { ChatMessage, SessionInfo } from '../types'
 const STORAGE_SESSION = 'cc-chat-session'
 const STORAGE_AGENT = 'cc-chat-agent'
 
+interface PermissionRequest {
+  prompt: string
+  tool?: string
+  action?: string
+  options: string[]
+}
+
 interface ChatState {
   messages: ChatMessage[]
   sessions: SessionInfo[]
@@ -11,12 +18,14 @@ interface ChatState {
   isStreaming: boolean
   currentAgent: string
   ws: WebSocket | null
+  pendingPermission: PermissionRequest | null
 
   // Actions
   fetchSessions: (agent?: string) => Promise<void>
   loadSession: (sessionId: string) => Promise<void>
   restoreSession: () => Promise<void>
   sendMessage: (message: string, images?: string[]) => void
+  sendPermissionResponse: (response: string) => void
   stopChat: () => void
   setAgent: (agent: string) => void
   clearMessages: () => void
@@ -29,6 +38,7 @@ export const useChatStore = create<ChatState>((set, get) => ({
   isStreaming: false,
   currentAgent: localStorage.getItem(STORAGE_AGENT) || 'leader',
   ws: null,
+  pendingPermission: null,
 
   fetchSessions: async (agent?: string) => {
     try {
@@ -114,43 +124,89 @@ export const useChatStore = create<ChatState>((set, get) => ({
       }))
     }
 
+    // Track session_id from init but only save it on success
+    let pendingSessionId: string | null = null
+
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data)
 
-      // Capture session_id from chat_start or any message
+      // Capture session_id but don't save until we know chat succeeded
       if (data.session_id) {
-        localStorage.setItem(STORAGE_SESSION, data.session_id)
-        set({ activeSession: data.session_id })
+        pendingSessionId = data.session_id
       }
 
       if (data.type === 'chat_start') {
-        // Session started, session_id already captured above
+        // Session starting - don't save session_id yet
         return
       }
 
-      if (data.type === 'chat_output') {
-        const content = data.content || ''
-        set(s => {
-          const lastMsg = s.messages[s.messages.length - 1]
-          if (lastMsg?.type === 'assistant') {
-            // Append to existing assistant message
-            return {
-              messages: [
-                ...s.messages.slice(0, -1),
-                { ...lastMsg, content: lastMsg.content + content },
-              ],
-            }
-          } else {
-            // Start new assistant message
-            return {
-              messages: [...s.messages, { type: 'assistant', content, timestamp: Date.now() }],
-            }
-          }
+      if (data.type === 'permission_request') {
+        // Claude is asking for permission to use a tool
+        set({
+          pendingPermission: {
+            prompt: data.prompt || 'Permission requested',
+            tool: data.tool,
+            action: data.action,
+            options: data.options || ['Yes', 'No'],
+          },
         })
+        return
+      }
+
+      if (data.type === 'permission_response_sent') {
+        // Permission response was sent, clear pending
+        set({ pendingPermission: null })
+        return
+      }
+
+      if (data.type === 'chat_output' || data.type === 'assistant') {
+        // Handle both legacy chat_output and Claude's native assistant format
+        let content = ''
+        if (data.type === 'assistant' && data.message?.content) {
+          // Claude's native format: { type: 'assistant', message: { content: [...] } }
+          // content is an array of content blocks
+          const contentBlocks = data.message.content
+          if (Array.isArray(contentBlocks)) {
+            content = contentBlocks
+              .filter((block: any) => block.type === 'text')
+              .map((block: any) => block.text)
+              .join('')
+          }
+        } else {
+          content = data.content || ''
+        }
+
+        if (content) {
+          set(s => {
+            const lastMsg = s.messages[s.messages.length - 1]
+            if (lastMsg?.type === 'assistant') {
+              // Append to existing assistant message
+              return {
+                messages: [
+                  ...s.messages.slice(0, -1),
+                  { ...lastMsg, content: lastMsg.content + content },
+                ],
+              }
+            } else {
+              // Start new assistant message
+              return {
+                messages: [...s.messages, { type: 'assistant', content, timestamp: Date.now() }],
+              }
+            }
+          })
+        }
       } else if (data.type === 'chat_done') {
+        // Only save session_id on successful completion with actual output
+        const currentMessages = get().messages
+        const hasAssistantResponse = currentMessages.some(m => m.type === 'assistant' && m.content)
+        if (pendingSessionId && hasAssistantResponse) {
+          localStorage.setItem(STORAGE_SESSION, pendingSessionId)
+          set({ activeSession: pendingSessionId })
+        }
         set({ isStreaming: false, ws: null })
         ws.close()
       } else if (data.type === 'error') {
+        // Don't save session_id on error
         set(s => ({
           messages: [...s.messages, { type: 'system', content: `Error: ${data.message}`, timestamp: Date.now() }],
           isStreaming: false,
@@ -175,7 +231,15 @@ export const useChatStore = create<ChatState>((set, get) => ({
       ws.send(JSON.stringify({ type: 'stop' }))
       ws.close()
     }
-    set({ isStreaming: false, ws: null })
+    set({ isStreaming: false, ws: null, pendingPermission: null })
+  },
+
+  sendPermissionResponse: (response: string) => {
+    const ws = get().ws
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'permission_response', response }))
+    }
+    set({ pendingPermission: null })
   },
 
   setAgent: (agent: string) => {

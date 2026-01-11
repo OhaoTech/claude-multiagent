@@ -8,6 +8,7 @@ import { ModeSelector, type ChatMode } from './ModeSelector'
 import { SessionPicker } from './SessionPicker'
 import { ImageAttachment } from './ImageAttachment'
 import { CommandPalette } from './CommandPalette'
+import { PermissionPrompt } from './PermissionPrompt'
 
 interface ChatPanelProps {
   width: number | string
@@ -27,7 +28,9 @@ export function ChatPanel({ width }: ChatPanelProps) {
     isStreaming,
     currentAgent,
     activeSession,
+    pendingPermission,
     sendMessage,
+    sendPermissionResponse,
     stopChat,
     setAgent,
     loadSession,
@@ -40,6 +43,21 @@ export function ChatPanel({ width }: ChatPanelProps) {
   useEffect(() => {
     restoreSession()
   }, [restoreSession])
+
+  // Ensure currentAgent is valid - default to leader or first agent
+  useEffect(() => {
+    if (agents.length > 0) {
+      const agentNames = agents.map(a => a.name)
+      if (!agentNames.includes(currentAgent)) {
+        // Current agent not in project - switch to leader or first agent
+        const leader = agents.find(a => a.is_leader)
+        setAgent(leader?.name || agents[0].name)
+      }
+    } else if (currentAgent !== 'leader') {
+      // No agents loaded yet, default to leader
+      setAgent('leader')
+    }
+  }, [agents, currentAgent, setAgent])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -166,6 +184,17 @@ export function ChatPanel({ width }: ChatPanelProps) {
         )}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Permission prompt */}
+      {pendingPermission && (
+        <PermissionPrompt
+          prompt={pendingPermission.prompt}
+          tool={pendingPermission.tool}
+          action={pendingPermission.action}
+          options={pendingPermission.options}
+          onRespond={sendPermissionResponse}
+        />
+      )}
 
       {/* Input area */}
       <div className="p-3 border-t border-[var(--border)] space-y-2 flex-shrink-0">
