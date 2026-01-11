@@ -234,6 +234,34 @@ class ClaudeRunner:
                 chunk = self.child.read_nonblocking(size=4096, timeout=0.1)
                 if chunk:
                     buffer += chunk
+                    print(f"[RUNNER] Buffer now ({len(buffer)} chars): {buffer[-200:]}")
+
+                    # Check buffer for permission prompts BEFORE waiting for newline
+                    # Permission prompts don't end with newline - they wait for input
+                    if not self._pending_permission:
+                        permission_event = self._check_permission_prompt(buffer)
+                        if permission_event:
+                            print(f"[RUNNER] Permission prompt in buffer: {buffer[:100]}")
+                            self._pending_permission = True
+                            # Clear the buffer since we're handling the prompt
+                            buffer = ""
+                            yield permission_event
+
+                            # Wait for user response
+                            try:
+                                response = await asyncio.wait_for(
+                                    self._input_queue.get(),
+                                    timeout=300  # 5 min timeout for user response
+                                )
+                                print(f"[RUNNER] Sending response: {response}")
+                                self.child.sendline(response)
+                                self._pending_permission = False
+                                yield {"type": "permission_response_sent", "response": response}
+                            except asyncio.TimeoutError:
+                                print("[RUNNER] Permission response timeout")
+                                yield {"type": "error", "message": "Permission response timeout"}
+                                break
+                            continue
 
                     # Process complete lines
                     while '\n' in buffer:
