@@ -151,20 +151,23 @@ class ClaudeRunner:
             # Resume without specific session - use --continue for last session
             cmd_parts.append("--continue")
 
-        # Use stream-json for real-time output (requires --verbose with -p)
-        cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
-
         # Apply mode-specific flags
         if mode == "yolo":
-            # YOLO mode: skip all permission prompts
+            # YOLO mode: skip all permission prompts, use stream-json
             cmd_parts.append("--dangerously-skip-permissions")
+            cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
         elif mode == "auto":
-            # Auto edit mode: auto-accept file edits
+            # Auto edit mode: auto-accept file edits, use stream-json
             cmd_parts.extend(["--allowedTools", "Edit,Write,Bash,Read,Glob,Grep"])
+            cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
         elif mode == "plan":
-            # Plan mode: only allow read operations initially
+            # Plan mode: only allow read operations, use stream-json
             cmd_parts.extend(["--allowedTools", "Read,Glob,Grep,Task"])
-        # Normal mode: no extra flags, will prompt for permissions
+            cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
+        else:
+            # Normal mode: no stream-json, use raw PTY for interactive permission prompts
+            # Add verbose for detailed output
+            cmd_parts.append("--verbose")
 
         # Set max turns to prevent runaway
         cmd_parts.extend(["--max-turns", "50"])
@@ -381,20 +384,36 @@ class ClaudeRunner:
         """Check if text contains a permission prompt and return event if so."""
         text_lower = text.lower()
 
-        # Tool permission: "Allow Edit to modify file.txt?"
+        # Claude CLI tool permission: "Allow Write to create /path/file?"
+        # Also matches: "(Y)es / (N)o / (A)lways"
         match = re.search(r'allow\s+(\w+)\s+to\s+(.+?)\?', text_lower)
         if match:
             tool = match.group(1).capitalize()
             action = match.group(2)
+            # Check for options in the prompt
+            options = ["Yes", "No"]
+            if '(a)lways' in text_lower or 'always' in text_lower:
+                options.append("Always")
             return {
                 "type": "permission_request",
                 "prompt": text,
                 "tool": tool,
                 "action": action,
-                "options": ["Yes", "No", "Always allow this session"]
+                "options": options
             }
 
-        # Yes/No prompt
+        # Claude CLI options format: "(Y)es / (N)o / (A)lways"
+        if '(y)es' in text_lower and '(n)o' in text_lower:
+            options = ["Yes", "No"]
+            if '(a)lways' in text_lower:
+                options.append("Always")
+            return {
+                "type": "permission_request",
+                "prompt": text,
+                "options": options
+            }
+
+        # Yes/No prompt variations
         if '[y/n]' in text_lower or '(y/n)' in text_lower:
             return {
                 "type": "permission_request",
@@ -412,6 +431,14 @@ class ClaudeRunner:
 
         # Plan approval
         if 'do you want to proceed' in text_lower or 'approve this plan' in text_lower:
+            return {
+                "type": "permission_request",
+                "prompt": text,
+                "options": ["Yes", "No"]
+            }
+
+        # Bash command confirmation
+        if 'run this command' in text_lower or 'execute this' in text_lower:
             return {
                 "type": "permission_request",
                 "prompt": text,
