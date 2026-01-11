@@ -11,9 +11,10 @@ from models import SessionInfo, SessionMessage
 def path_to_claude_dir_name(path: str) -> str:
     """Convert a filesystem path to Claude's project directory naming convention.
 
-    e.g., /home/frankyin/lab/myproject -> -home-frankyin-lab-myproject
+    Claude replaces slashes with hyphens and also converts underscores to hyphens.
+    e.g., /home/frankyin/lab/my_project -> -home-frankyin-lab-my-project
     """
-    return path.replace("/", "-").replace("\\", "-")
+    return path.replace("/", "-").replace("\\", "-").replace("_", "-")
 
 
 def get_project_sessions_dirs(project_root: str, agents: list[dict] = None) -> list[tuple[Path, str]]:
@@ -32,20 +33,37 @@ def get_project_sessions_dirs(project_root: str, agents: list[dict] = None) -> l
         return []
 
     # Build a mapping of worktree paths to agent names
-    # Sort by path length (longest first) so more specific paths match first
+    # Include both symlink path and resolved real path for each
     worktree_to_agent = {}
     if agents:
         for agent in agents:
             worktree_path = agent.get("worktree_path")
             if worktree_path:
-                # Convert worktree path to Claude directory pattern
+                # Add both the original path and resolved path
                 pattern = path_to_claude_dir_name(worktree_path)
                 worktree_to_agent[pattern] = agent.get("name", "leader")
+                # Also add resolved path in case of symlinks
+                try:
+                    resolved = str(Path(worktree_path).resolve())
+                    if resolved != worktree_path:
+                        resolved_pattern = path_to_claude_dir_name(resolved)
+                        worktree_to_agent[resolved_pattern] = agent.get("name", "leader")
+                except:
+                    pass
 
-    # Also add the main project root for leader
+    # Also add the main project root for leader (both original and resolved)
     main_pattern = path_to_claude_dir_name(project_root)
     if main_pattern not in worktree_to_agent:
         worktree_to_agent[main_pattern] = "leader"
+    # Add resolved path too
+    try:
+        resolved_root = str(Path(project_root).resolve())
+        if resolved_root != project_root:
+            resolved_pattern = path_to_claude_dir_name(resolved_root)
+            if resolved_pattern not in worktree_to_agent:
+                worktree_to_agent[resolved_pattern] = "leader"
+    except:
+        pass
 
     # Sort patterns by length (longest first) for correct matching
     sorted_patterns = sorted(worktree_to_agent.items(), key=lambda x: len(x[0]), reverse=True)
