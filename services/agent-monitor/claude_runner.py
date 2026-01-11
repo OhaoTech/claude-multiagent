@@ -165,9 +165,10 @@ class ClaudeRunner:
             cmd_parts.extend(["--allowedTools", "Read,Glob,Grep,Task"])
             cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
         else:
-            # Normal mode: no stream-json, use raw PTY for interactive permission prompts
-            # Add verbose for detailed output
-            cmd_parts.append("--verbose")
+            # Normal mode: use stream-json with acceptEdits permission mode
+            # This auto-accepts file edits while still showing tool use in UI
+            cmd_parts.extend(["--output-format", "stream-json", "--verbose"])
+            cmd_parts.extend(["--permission-mode", "acceptEdits"])
 
         # Set max turns to prevent runaway
         cmd_parts.extend(["--max-turns", "50"])
@@ -181,13 +182,9 @@ class ClaudeRunner:
             print(f"[RUNNER] Working dir: {self.workdir}")
             print(f"[RUNNER] Mode: {mode}")
 
-            # Use PTY for interactive mode (normal), subprocess for others
-            if mode == "normal":
-                async for event in self._run_with_pty(cmd, temp_image_paths, on_output):
-                    yield event
-            else:
-                async for event in self._run_with_subprocess(cmd_parts, temp_image_paths, on_output):
-                    yield event
+            # Use subprocess with stream-json for all modes
+            async for event in self._run_with_subprocess(cmd_parts, temp_image_paths, on_output):
+                yield event
 
         except asyncio.CancelledError:
             await self.stop()
