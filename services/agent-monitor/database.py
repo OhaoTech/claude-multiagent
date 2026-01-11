@@ -1253,7 +1253,7 @@ def upsert_session_metadata(
     return get_session_metadata(session_id)
 
 
-def soft_delete_session(session_id: str) -> bool:
+def soft_delete_session(session_id: str, project_id: Optional[str] = None) -> bool:
     """Soft delete a session (move to recycle bin)."""
     now = datetime.utcnow().isoformat()
     existing = get_session_metadata(session_id)
@@ -1262,14 +1262,14 @@ def soft_delete_session(session_id: str) -> bool:
         cursor = conn.cursor()
         if existing:
             cursor.execute(
-                "UPDATE session_metadata SET is_deleted = 1, deleted_at = ? WHERE session_id = ?",
-                (now, session_id)
+                "UPDATE session_metadata SET is_deleted = 1, deleted_at = ?, project_id = COALESCE(?, project_id) WHERE session_id = ?",
+                (now, project_id, session_id)
             )
         else:
             cursor.execute("""
-                INSERT INTO session_metadata (session_id, is_deleted, deleted_at, created_at)
-                VALUES (?, 1, ?, ?)
-            """, (session_id, now, now))
+                INSERT INTO session_metadata (session_id, project_id, is_deleted, deleted_at, created_at)
+                VALUES (?, ?, 1, ?, ?)
+            """, (session_id, project_id, now, now))
         return True
 
 

@@ -135,7 +135,9 @@ async def update_session(session_id: str, update: SessionUpdate):
 @router.delete("/session/{session_id}")
 async def delete_session(session_id: str):
     """Soft delete a session (move to recycle bin)."""
-    db.soft_delete_session(session_id)
+    active_project = db.get_active_project()
+    project_id = active_project["id"] if active_project else None
+    db.soft_delete_session(session_id, project_id)
     return {"status": "deleted", "session_id": session_id}
 
 
