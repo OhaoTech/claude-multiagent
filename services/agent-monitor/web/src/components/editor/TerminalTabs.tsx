@@ -4,6 +4,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
+import { useIsMobile } from '../../hooks/useIsMobile'
 
 interface TerminalTab {
   id: string
@@ -26,6 +27,7 @@ export function TerminalTabs({ height, onClose, onHeightChange }: TerminalTabsPr
   const isMaximizedRef = useRef(false)
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null)
   const tabCounter = useRef(2)
+  const isMobile = useIsMobile()
 
   const addTab = useCallback(() => {
     const newTab: TerminalTab = {
@@ -120,75 +122,79 @@ export function TerminalTabs({ height, onClose, onHeightChange }: TerminalTabsPr
       />
 
       {/* Header with tabs */}
-      <div className="h-8 flex items-center justify-between border-b border-[var(--border)] flex-shrink-0">
+      <div className={`flex items-center justify-between border-b border-[var(--border)] flex-shrink-0 ${isMobile ? 'h-10' : 'h-8'}`}>
         <div className="flex items-center overflow-x-auto hide-scrollbar">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
-              className={`group flex items-center gap-1.5 px-3 py-1.5 text-xs border-r border-[var(--border)] transition-colors ${
+              className={`group flex items-center gap-1.5 px-3 py-2 text-xs border-r border-[var(--border)] transition-colors ${
                 activeTab === tab.id
                   ? 'bg-[var(--bg-tertiary)] text-white'
                   : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
               }`}
             >
-              <TerminalIcon size={12} />
+              <TerminalIcon size={isMobile ? 14 : 12} />
               <span>{tab.title}</span>
               {tabs.length > 1 && (
                 <button
                   onClick={(e) => closeTab(tab.id, e)}
-                  className="opacity-0 group-hover:opacity-100 hover:text-red-400 transition-opacity"
+                  className={`hover:text-red-400 transition-opacity ${isMobile ? 'opacity-100 p-1' : 'opacity-0 group-hover:opacity-100'}`}
                 >
-                  <X size={12} />
+                  <X size={isMobile ? 14 : 12} />
                 </button>
               )}
             </button>
           ))}
           <button
             onClick={addTab}
-            className="px-2 py-1.5 text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)] transition-colors"
+            className={`text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)] transition-colors ${isMobile ? 'p-2' : 'px-2 py-1.5'}`}
             title="New terminal"
           >
-            <Plus size={14} />
+            <Plus size={isMobile ? 18 : 14} />
           </button>
         </div>
 
-        <div className="flex items-center gap-1 px-2 flex-shrink-0">
-          <button
-            onClick={toggleSplit}
-            className={`p-1 hover:bg-[var(--bg-tertiary)] rounded transition-colors ${
-              isSplit ? 'text-[var(--accent)]' : ''
-            }`}
-            title={isSplit ? 'Unsplit' : 'Split terminal'}
-          >
-            <SplitSquareVertical size={14} />
-          </button>
+        <div className={`flex items-center gap-1 flex-shrink-0 ${isMobile ? 'px-1' : 'px-2'}`}>
+          {/* Hide split on mobile - not practical */}
+          {!isMobile && (
+            <button
+              onClick={toggleSplit}
+              className={`p-1.5 hover:bg-[var(--bg-tertiary)] rounded transition-colors ${
+                isSplit ? 'text-[var(--accent)]' : ''
+              }`}
+              title={isSplit ? 'Unsplit' : 'Split terminal'}
+            >
+              <SplitSquareVertical size={14} />
+            </button>
+          )}
           <button
             onClick={toggleMaximize}
-            className="p-1 hover:bg-[var(--bg-tertiary)] rounded transition-colors"
+            className={`hover:bg-[var(--bg-tertiary)] rounded transition-colors ${isMobile ? 'p-2' : 'p-1.5'}`}
             title={isMaximizedRef.current ? 'Restore' : 'Maximize'}
           >
-            {isMaximizedRef.current ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            {isMaximizedRef.current ? <Minimize2 size={isMobile ? 18 : 14} /> : <Maximize2 size={isMobile ? 18 : 14} />}
           </button>
           <button
             onClick={onClose}
-            className="p-1 hover:bg-[var(--bg-tertiary)] rounded transition-colors"
+            className={`hover:bg-[var(--bg-tertiary)] rounded transition-colors ${isMobile ? 'p-2' : 'p-1.5'}`}
             title="Close terminal"
           >
-            <X size={14} />
+            <X size={isMobile ? 18 : 14} />
           </button>
         </div>
       </div>
 
       {/* Terminal content */}
       <div className="flex-1 overflow-hidden flex">
-        {isSplit && splitTab ? (
+        {isSplit && splitTab && !isMobile ? (
           <>
             {/* Left pane */}
             <div className="flex-1 overflow-hidden border-r border-[var(--border)]">
               <TerminalPane
                 terminalId={activeTab}
                 isActive={true}
+                isMobile={isMobile}
               />
             </div>
             {/* Right pane */}
@@ -196,6 +202,7 @@ export function TerminalTabs({ height, onClose, onHeightChange }: TerminalTabsPr
               <TerminalPane
                 terminalId={splitTab}
                 isActive={true}
+                isMobile={isMobile}
               />
             </div>
           </>
@@ -211,6 +218,7 @@ export function TerminalTabs({ height, onClose, onHeightChange }: TerminalTabsPr
               <TerminalPane
                 terminalId={tab.id}
                 isActive={tab.id === activeTab}
+                isMobile={isMobile}
               />
             </div>
           ))
@@ -224,9 +232,10 @@ export function TerminalTabs({ height, onClose, onHeightChange }: TerminalTabsPr
 interface TerminalPaneProps {
   terminalId: string
   isActive: boolean
+  isMobile?: boolean
 }
 
-function TerminalPane({ terminalId, isActive }: TerminalPaneProps) {
+function TerminalPane({ terminalId, isActive, isMobile = false }: TerminalPaneProps) {
   const terminalRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
@@ -235,10 +244,10 @@ function TerminalPane({ terminalId, isActive }: TerminalPaneProps) {
   useEffect(() => {
     if (!terminalRef.current || xtermRef.current) return
 
-    // Create xterm instance
+    // Create xterm instance with responsive font size
     const xterm = new XTerm({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: isMobile ? 11 : 13,
       fontFamily: 'Menlo, Monaco, "Courier New", monospace',
       theme: {
         background: '#1a1a1a',

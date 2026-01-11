@@ -10,13 +10,24 @@ import { StateBanner } from './StateBanner'
 import { ActivityFeed } from './ActivityFeed'
 import { SessionsList } from './SessionsList'
 import { useChatStore } from '../../stores/chatStore'
+import { useIsMobile } from '../../hooks/useIsMobile'
 
 type ViewMode = 'grid' | 'network' | 'queue' | 'sprints' | 'performance' | 'usage'
+
+const VIEW_MODES: { mode: ViewMode; icon: typeof LayoutGrid; label: string }[] = [
+  { mode: 'grid', icon: LayoutGrid, label: 'Grid' },
+  { mode: 'network', icon: Network, label: 'Network' },
+  { mode: 'queue', icon: ListTodo, label: 'Queue' },
+  { mode: 'sprints', icon: Target, label: 'Sprints' },
+  { mode: 'performance', icon: BarChart3, label: 'Perf' },
+  { mode: 'usage', icon: TrendingUp, label: 'Usage' },
+]
 
 export function MonitorView() {
   const [viewMode, setViewMode] = useState<ViewMode>('grid')
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null)
   const { loadSession, setAgent } = useChatStore()
+  const isMobile = useIsMobile()
 
   const handleAgentSelect = (agentName: string | null) => {
     setSelectedAgent(agentName === selectedAgent ? null : agentName)
@@ -32,83 +43,26 @@ export function MonitorView() {
   return (
     <div className="flex-1 flex flex-col overflow-hidden bg-[var(--bg-primary)]">
       {/* State Banner with View Toggle */}
-      <div className="flex items-center justify-between border-b border-[var(--border)]">
+      <div className={`flex items-center justify-between border-b border-[var(--border)] ${isMobile ? 'flex-col' : ''}`}>
         <StateBanner />
 
-        {/* View Toggle */}
-        <div className="flex items-center gap-1 px-3 py-2">
-          <button
-            onClick={() => setViewMode('grid')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-              viewMode === 'grid'
-                ? 'bg-[var(--accent)] text-white'
-                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
-            }`}
-            title="Grid View"
-          >
-            <LayoutGrid size={14} />
-            Grid
-          </button>
-          <button
-            onClick={() => setViewMode('network')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-              viewMode === 'network'
-                ? 'bg-[var(--accent)] text-white'
-                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
-            }`}
-            title="Network View"
-          >
-            <Network size={14} />
-            Network
-          </button>
-          <button
-            onClick={() => setViewMode('queue')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-              viewMode === 'queue'
-                ? 'bg-[var(--accent)] text-white'
-                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
-            }`}
-            title="Task Queue"
-          >
-            <ListTodo size={14} />
-            Queue
-          </button>
-          <button
-            onClick={() => setViewMode('sprints')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-              viewMode === 'sprints'
-                ? 'bg-[var(--accent)] text-white'
-                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
-            }`}
-            title="Sprint Planning"
-          >
-            <Target size={14} />
-            Sprints
-          </button>
-          <button
-            onClick={() => setViewMode('performance')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-              viewMode === 'performance'
-                ? 'bg-[var(--accent)] text-white'
-                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
-            }`}
-            title="Agent Performance"
-          >
-            <BarChart3 size={14} />
-            Perf
-          </button>
-          <button
-            onClick={() => setViewMode('usage')}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-              viewMode === 'usage'
-                ? 'bg-[var(--accent)] text-white'
-                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
-            }`}
-            title="Usage Analytics"
-          >
-            <TrendingUp size={14} />
-            Usage
-          </button>
+        {/* View Toggle - scrollable on mobile */}
+        <div className={`flex items-center gap-1 px-2 py-2 ${isMobile ? 'w-full overflow-x-auto hide-scrollbar' : ''}`}>
+          {VIEW_MODES.map(({ mode, icon: Icon, label }) => (
+            <button
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded text-xs sm:text-sm font-medium transition-colors whitespace-nowrap flex-shrink-0 ${
+                viewMode === mode
+                  ? 'bg-[var(--accent)] text-white'
+                  : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
+              }`}
+              title={label}
+            >
+              <Icon size={isMobile ? 16 : 14} />
+              {!isMobile && label}
+            </button>
+          ))}
         </div>
       </div>
 

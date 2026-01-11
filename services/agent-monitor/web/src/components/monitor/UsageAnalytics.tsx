@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Cpu
 } from 'lucide-react'
+import { useIsMobile } from '../../hooks/useIsMobile'
 
 interface ModelUsage {
   model_id: string
@@ -64,6 +65,7 @@ export function UsageAnalytics() {
   const [realtimeUsage, setRealtimeUsage] = useState<RealtimeUsage | null>(null)
   const [loading, setLoading] = useState(true)
   const [days, setDays] = useState(30)
+  const isMobile = useIsMobile()
 
   const fetchUsage = async () => {
     setLoading(true)
@@ -208,7 +210,7 @@ export function UsageAnalytics() {
       )}
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className={`grid gap-3 ${isMobile ? 'grid-cols-2' : 'grid-cols-2 md:grid-cols-4'}`}>
         <StatCard
           icon={<DollarSign size={18} />}
           label="Total Est. Cost"
@@ -316,7 +318,7 @@ export function UsageAnalytics() {
       </div>
 
       {/* Token Stats */}
-      <div className="grid grid-cols-2 gap-3 text-xs">
+      <div className={`grid gap-3 text-xs ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
         <div className="bg-[var(--bg-tertiary)] rounded-lg p-3">
           <div className="text-[var(--text-secondary)] mb-1">Total Input Tokens</div>
           <div className="text-lg font-medium">
