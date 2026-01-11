@@ -83,7 +83,8 @@ async def chat_websocket(websocket: WebSocket, chat_id: str):
         })
 
         # Track Claude's real session ID from output
-        real_session_id = None
+        # If resuming with a known session_id, use that (no need to capture from output)
+        real_session_id = session_id if session_id and resume else None
         output_count = 0
 
         async for output in runner.run_chat(message, session_id, resume, images=images, mode=mode, model=model):
@@ -91,8 +92,8 @@ async def chat_websocket(websocket: WebSocket, chat_id: str):
             output_type = output.get('type')
             print(f"[CHAT] Output #{output_count}: type={output_type}")
 
-            # Capture real session ID from Claude's output
-            # Claude outputs sessionId in init/system messages
+            # Capture real session ID from Claude's output (for new sessions)
+            # Claude outputs sessionId in init/system messages (stream-json mode)
             if not real_session_id:
                 if output.get('sessionId'):
                     real_session_id = output['sessionId']
