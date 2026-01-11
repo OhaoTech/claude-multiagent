@@ -268,6 +268,30 @@ class ClaudeRunner:
                         try:
                             data = json.loads(line)
                             print(f"[RUNNER] Line {line_count}: {line[:100]}...")
+
+                            # Check for permission patterns in assistant messages
+                            permission_event = self._check_json_permission(data)
+                            if permission_event:
+                                print(f"[RUNNER] Permission detected in JSON message")
+                                self._pending_permission = True
+                                yield permission_event
+
+                                # Wait for user response
+                                try:
+                                    response = await asyncio.wait_for(
+                                        self._input_queue.get(),
+                                        timeout=300
+                                    )
+                                    print(f"[RUNNER] Sending response: {response}")
+                                    self.child.sendline(response)
+                                    self._pending_permission = False
+                                    yield {"type": "permission_response_sent", "response": response}
+                                except asyncio.TimeoutError:
+                                    print("[RUNNER] Permission response timeout")
+                                    yield {"type": "error", "message": "Permission response timeout"}
+                                    break
+                                continue
+
                             yield data
                             if on_output:
                                 on_output(line)
@@ -393,6 +417,58 @@ class ClaudeRunner:
                 "prompt": text,
                 "options": ["Yes", "No"]
             }
+
+        return None
+
+    def _check_json_permission(self, data: dict) -> Optional[dict]:
+        """Check if a JSON message contains a permission request pattern."""
+        # Extract text content from assistant messages
+        text = ""
+
+        # Handle assistant message format: {"type": "assistant", "message": {"content": [...]}}
+        if data.get("type") == "assistant":
+            message = data.get("message", {})
+            content = message.get("content", [])
+            if isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text += block.get("text", "") + " "
+            elif isinstance(content, str):
+                text = content
+
+        # Handle result format that might contain permission prompts
+        if data.get("type") == "result":
+            text = str(data.get("result", ""))
+
+        if not text:
+            return None
+
+        text_lower = text.lower()
+
+        # Check for common permission request patterns
+        permission_patterns = [
+            (r'may i proceed', 'proceed'),
+            (r'do you want me to', 'action'),
+            (r'should i (create|write|modify|delete|execute|run)', 'action'),
+            (r'do you approve', 'approval'),
+            (r'is this okay', 'confirmation'),
+            (r'can i proceed', 'proceed'),
+            (r'shall i', 'action'),
+        ]
+
+        for pattern, action_type in permission_patterns:
+            if re.search(pattern, text_lower):
+                # Extract a preview of what's being asked
+                preview = text[:200].strip()
+                if len(text) > 200:
+                    preview += "..."
+
+                return {
+                    "type": "permission_request",
+                    "prompt": preview,
+                    "action": action_type,
+                    "options": ["Yes", "No"]
+                }
 
         return None
 
