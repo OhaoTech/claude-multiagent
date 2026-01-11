@@ -5,25 +5,14 @@ import base64
 import json
 import os
 import re
+import shlex
 import tempfile
 from pathlib import Path
 from typing import AsyncGenerator, Callable, Optional
 
 import pexpect
 
-# Configuration
-REPO_ROOT = Path(os.environ.get("REPO_ROOT", "/home/frankyin/Desktop/lab/fluxa"))
-LAB_DIR = REPO_ROOT.parent
-
-# Agent to working directory mapping
-AGENT_WORKDIRS = {
-    "leader": REPO_ROOT,
-    "api": LAB_DIR / "fluxa-api",
-    "mobile": LAB_DIR / "fluxa-mobile",
-    "admin": LAB_DIR / "fluxa-admin",
-    "pipeline": LAB_DIR / "fluxa-pipeline",
-    "services": LAB_DIR / "fluxa-services",
-}
+import database as db
 
 # Permission prompt patterns
 PERMISSION_PATTERNS = [
@@ -43,13 +32,52 @@ PERMISSION_PATTERNS = [
 class ClaudeRunner:
     """Manages Claude Code subprocess for interactive chat with PTY support."""
 
-    def __init__(self, agent: str = "leader"):
+    def __init__(self, agent: str = "leader", project_root: Optional[Path] = None):
         self.agent = agent
-        self.workdir = AGENT_WORKDIRS.get(agent, REPO_ROOT)
+        self.project_root = project_root
+        self.workdir = self._resolve_workdir()
         self.child: Optional[pexpect.spawn] = None
         self._running = False
         self._input_queue: asyncio.Queue = asyncio.Queue()
         self._pending_permission = False
+
+    def _resolve_workdir(self) -> Path:
+        """Resolve the working directory for the agent based on project and agent config."""
+        # If project_root is provided, use it
+        if self.project_root:
+            # For leader, use project root directly
+            if self.agent == "leader":
+                return self.project_root
+
+            # For other agents, check if they have a worktree path in DB
+            project = db.get_active_project()
+            if project:
+                agents = db.list_agents(project["id"])
+                for a in agents:
+                    if a["name"] == self.agent and a.get("worktree_path"):
+                        return Path(a["worktree_path"])
+
+            # Fallback to project root
+            return self.project_root
+
+        # Fallback: get active project from database
+        project = db.get_active_project()
+        if project:
+            project_root = Path(project["root_path"])
+
+            if self.agent == "leader":
+                return project_root
+
+            # Check for agent's worktree path
+            agents = db.list_agents(project["id"])
+            for a in agents:
+                if a["name"] == self.agent and a.get("worktree_path"):
+                    return Path(a["worktree_path"])
+
+            return project_root
+
+        # Ultimate fallback
+        return Path.home()
 
     async def run_chat(
         self,
@@ -58,6 +86,7 @@ class ClaudeRunner:
         resume: bool = True,
         images: Optional[list[str]] = None,
         mode: str = "normal",
+        model: str = "sonnet",
         on_output: Optional[Callable[[str], None]] = None
     ) -> AsyncGenerator[dict, None]:
         """
@@ -69,6 +98,7 @@ class ClaudeRunner:
             resume: Whether to use --continue flag
             images: List of base64 data URLs for images
             mode: Operating mode (normal, plan, auto, yolo)
+            model: Model to use (haiku, sonnet, opus)
             on_output: Optional callback for each output chunk
 
         Yields:
@@ -103,6 +133,10 @@ class ClaudeRunner:
         # Build command
         cmd_parts = ["claude"]
 
+        # Add model selection
+        if model and model in ("haiku", "sonnet", "opus"):
+            cmd_parts.extend(["--model", model])
+
         # Add images first (before prompt)
         for img_path in temp_image_paths:
             cmd_parts.extend(["--image", img_path])
@@ -110,10 +144,11 @@ class ClaudeRunner:
         # Add prompt
         cmd_parts.extend(["-p", message])
 
-        # Add resume flag - prefer explicit session_id, otherwise --continue
-        if session_id:
+        # Add resume flag - only use --resume if resume=True AND we have a session_id
+        if resume and session_id:
             cmd_parts.extend(["--resume", session_id])
         elif resume:
+            # Resume without specific session - use --continue for last session
             cmd_parts.append("--continue")
 
         # Use stream-json for real-time output (requires --verbose with -p)
@@ -134,7 +169,8 @@ class ClaudeRunner:
         # Set max turns to prevent runaway
         cmd_parts.extend(["--max-turns", "50"])
 
-        cmd = ' '.join(cmd_parts)
+        # Build command string with proper shell quoting
+        cmd = ' '.join(shlex.quote(part) for part in cmd_parts)
 
         try:
             self._running = True
@@ -390,10 +426,10 @@ class ChatSessionManager:
     def __init__(self):
         self.sessions: dict[str, ClaudeRunner] = {}
 
-    def get_runner(self, session_id: str, agent: str = "leader") -> ClaudeRunner:
+    def get_runner(self, session_id: str, agent: str = "leader", project_root: Optional[Path] = None) -> ClaudeRunner:
         """Get or create a runner for a session."""
         if session_id not in self.sessions:
-            self.sessions[session_id] = ClaudeRunner(agent)
+            self.sessions[session_id] = ClaudeRunner(agent, project_root)
         return self.sessions[session_id]
 
     async def stop_session(self, session_id: str):
