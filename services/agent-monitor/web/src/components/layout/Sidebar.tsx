@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronRight, ChevronDown, File, Folder, FolderOpen } from 'lucide-react'
+import { ChevronRight, ChevronDown, File, Folder, FolderOpen, RefreshCw } from 'lucide-react'
 import { useEditorStore } from '../../stores/editorStore'
 import type { FileTreeNode } from '../../types'
 import { ContextMenu, fileMenuItems, folderMenuItems, emptyMenuItems } from './ContextMenu'
@@ -113,7 +113,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ width, onFileOpen }: SidebarProps) {
-  const { fileTree, loading, openFile, createFile, deleteFile, renameFile, currentTreePath, copyToClipboard, pasteFile, clipboard } = useEditorStore()
+  const { fileTree, loading, openFile, createFile, deleteFile, renameFile, currentTreePath, copyToClipboard, pasteFile, clipboard, refreshTree } = useEditorStore()
+  const [isRefreshing, setIsRefreshing] = useState(false)
 
   const [expandedPaths, setExpandedPaths] = useState<Set<string>>(new Set())
   const [contextMenu, setContextMenu] = useState<ContextMenuState>({
@@ -260,14 +261,31 @@ export function Sidebar({ width, onFileOpen }: SidebarProps) {
     e.preventDefault()
   }
 
+  const handleRefresh = async () => {
+    setIsRefreshing(true)
+    try {
+      await refreshTree()
+    } finally {
+      setIsRefreshing(false)
+    }
+  }
+
   return (
     <aside
       className="bg-[var(--bg-secondary)] border-r border-[var(--border)] flex flex-col overflow-hidden"
       style={{ width: typeof width === 'number' ? `${width}px` : width }}
       onContextMenu={handleSidebarContextMenu}
     >
-      <div className="h-8 flex items-center px-3 text-xs font-semibold uppercase text-[var(--text-secondary)] border-b border-[var(--border)]">
-        Explorer
+      <div className="h-8 flex items-center justify-between px-3 border-b border-[var(--border)]">
+        <span className="text-xs font-semibold uppercase text-[var(--text-secondary)]">Explorer</span>
+        <button
+          onClick={handleRefresh}
+          disabled={isRefreshing || loading}
+          className="p-1 hover:bg-[var(--bg-tertiary)] rounded transition-colors disabled:opacity-50"
+          title="Refresh file tree"
+        >
+          <RefreshCw size={14} className={`text-[var(--text-secondary)] ${isRefreshing ? 'animate-spin' : ''}`} />
+        </button>
       </div>
       <div
         className="flex-1 overflow-y-auto py-1"
