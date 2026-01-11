@@ -28,12 +28,16 @@ async def list_all_sessions(limit: int = 50) -> list[dict]:
 
     sessions = get_all_sessions(project_root, agents)
 
-    # Get metadata and filter out deleted sessions
+    # Get metadata and filter out deleted sessions and warmup sessions
     metadata = db.get_all_session_metadata()
     result = []
     for s in sessions:
         meta = metadata.get(s.session_id, {})
         if meta.get("is_deleted"):
+            continue
+        # Filter out warmup/initialization sessions (low message count with warmup preview)
+        preview = (s.last_message_preview or "").lower()
+        if s.message_count <= 5 and ("warmup" in preview or "warm up" in preview or "i understand this is a warmup" in preview):
             continue
         session_dict = s.model_dump()
         session_dict["nickname"] = meta.get("nickname")
@@ -86,12 +90,16 @@ async def list_agent_sessions(agent: str, limit: int = 50) -> list[dict]:
 
     sessions = get_sessions_for_agent(agent, project_root, agents)
 
-    # Get metadata and filter out deleted sessions
+    # Get metadata and filter out deleted sessions and warmup sessions
     metadata = db.get_all_session_metadata()
     result = []
     for s in sessions:
         meta = metadata.get(s.session_id, {})
         if meta.get("is_deleted"):
+            continue
+        # Filter out warmup/initialization sessions (low message count with warmup preview)
+        preview = (s.last_message_preview or "").lower()
+        if s.message_count <= 5 and ("warmup" in preview or "warm up" in preview or "i understand this is a warmup" in preview):
             continue
         session_dict = s.model_dump()
         session_dict["nickname"] = meta.get("nickname")
