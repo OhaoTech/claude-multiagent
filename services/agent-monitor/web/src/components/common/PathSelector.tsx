@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Folder, FolderGit, ChevronUp, X, Check, Home } from 'lucide-react'
+import { Folder, FolderGit, ChevronUp, X, Check, Home, Eye, EyeOff, FolderPlus } from 'lucide-react'
 
 interface DirectoryInfo {
   name: string
@@ -11,27 +11,35 @@ interface BrowseResponse {
   current_path: string
   parent: string | null
   directories: DirectoryInfo[]
+  is_git_repo: boolean
 }
 
 interface PathSelectorProps {
   value: string
-  onChange: (path: string) => void
+  onChange: (path: string, isGitRepo: boolean) => void
   onClose: () => void
   requireGitRepo?: boolean
 }
 
-export function PathSelector({ value, onChange, onClose, requireGitRepo = true }: PathSelectorProps) {
+export function PathSelector({ value, onChange, onClose, requireGitRepo: _requireGitRepo = true }: PathSelectorProps) {
   const [currentPath, setCurrentPath] = useState(value || '')
   const [directories, setDirectories] = useState<DirectoryInfo[]>([])
   const [parentPath, setParentPath] = useState<string | null>(null)
+  const [isGitRepo, setIsGitRepo] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showHidden, setShowHidden] = useState(false)
+  const [showNewFolderDialog, setShowNewFolderDialog] = useState(false)
+  const [newFolderName, setNewFolderName] = useState('')
+  const [creatingFolder, setCreatingFolder] = useState(false)
 
-  const fetchDirectories = async (path?: string) => {
+  const fetchDirectories = async (path?: string, hidden?: boolean) => {
     setLoading(true)
     setError('')
     try {
-      const url = path ? `/api/files/browse?path=${encodeURIComponent(path)}` : '/api/files/browse'
+      const showHiddenParam = hidden ?? showHidden
+      let url = path ? `/api/files/browse?path=${encodeURIComponent(path)}` : '/api/files/browse'
+      url += `${path ? '&' : '?'}show_hidden=${showHiddenParam}`
       const res = await fetch(url)
       if (!res.ok) {
         const data = await res.json()
@@ -41,6 +49,7 @@ export function PathSelector({ value, onChange, onClose, requireGitRepo = true }
       setCurrentPath(data.current_path)
       setParentPath(data.parent)
       setDirectories(data.directories)
+      setIsGitRepo(data.is_git_repo)
     } catch (err: any) {
       setError(err.message || 'Failed to browse directory')
     } finally {
@@ -51,6 +60,38 @@ export function PathSelector({ value, onChange, onClose, requireGitRepo = true }
   useEffect(() => {
     fetchDirectories(value || undefined)
   }, [])
+
+  const handleToggleHidden = () => {
+    const newShowHidden = !showHidden
+    setShowHidden(newShowHidden)
+    fetchDirectories(currentPath, newShowHidden)
+  }
+
+  const handleCreateFolder = async () => {
+    if (!newFolderName.trim()) return
+
+    setCreatingFolder(true)
+    try {
+      const newPath = `${currentPath}/${newFolderName.trim()}`
+      const res = await fetch('/api/files/create', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: newPath, is_dir: true }),
+      })
+      if (!res.ok) {
+        const data = await res.json()
+        throw new Error(data.detail || 'Failed to create folder')
+      }
+      setShowNewFolderDialog(false)
+      setNewFolderName('')
+      // Refresh and navigate to new folder
+      await fetchDirectories(newPath)
+    } catch (err: any) {
+      setError(err.message || 'Failed to create folder')
+    } finally {
+      setCreatingFolder(false)
+    }
+  }
 
   const handleSelect = (dir: DirectoryInfo) => {
     fetchDirectories(dir.path)
@@ -67,13 +108,13 @@ export function PathSelector({ value, onChange, onClose, requireGitRepo = true }
   }
 
   const handleConfirm = () => {
-    onChange(currentPath)
+    onChange(currentPath, isGitRepo)
     onClose()
   }
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-      <div className="bg-[var(--bg-secondary)] rounded-lg w-[600px] max-w-[95vw] max-h-[80vh] flex flex-col">
+      <div className="relative bg-[var(--bg-secondary)] rounded-lg w-[600px] max-w-[95vw] max-h-[80vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-[var(--border)]">
           <h2 className="text-lg font-semibold">Select Directory</h2>
@@ -105,6 +146,20 @@ export function PathSelector({ value, onChange, onClose, requireGitRepo = true }
           <code className="text-sm flex-1 truncate text-[var(--text-secondary)]">
             {currentPath}
           </code>
+          <button
+            onClick={() => setShowNewFolderDialog(true)}
+            className="p-1.5 hover:bg-[var(--bg-secondary)] rounded transition-colors"
+            title="Create new folder"
+          >
+            <FolderPlus size={16} />
+          </button>
+          <button
+            onClick={handleToggleHidden}
+            className={`p-1.5 hover:bg-[var(--bg-secondary)] rounded transition-colors ${showHidden ? 'text-[var(--accent)]' : ''}`}
+            title={showHidden ? 'Hide hidden files' : 'Show hidden files'}
+          >
+            {showHidden ? <Eye size={16} /> : <EyeOff size={16} />}
+          </button>
         </div>
 
         {/* Error */}
@@ -145,9 +200,14 @@ export function PathSelector({ value, onChange, onClose, requireGitRepo = true }
 
         {/* Footer */}
         <div className="p-4 border-t border-[var(--border)] flex items-center justify-between">
-          <div className="text-sm text-[var(--text-secondary)]">
-            {requireGitRepo && (
-              <span>Select a directory with a git repository</span>
+          <div className="text-sm">
+            {isGitRepo ? (
+              <span className="text-green-400 flex items-center gap-1">
+                <FolderGit size={14} />
+                Git repository
+              </span>
+            ) : (
+              <span className="text-yellow-500">Not a git repository</span>
             )}
           </div>
           <div className="flex items-center gap-2">
@@ -166,6 +226,48 @@ export function PathSelector({ value, onChange, onClose, requireGitRepo = true }
             </button>
           </div>
         </div>
+
+        {/* New Folder Dialog */}
+        {showNewFolderDialog && (
+          <div className="absolute inset-0 bg-black/50 flex items-center justify-center rounded-lg">
+            <div className="bg-[var(--bg-secondary)] rounded-lg w-[300px] p-4 border border-[var(--border)]">
+              <h3 className="text-sm font-semibold mb-3">Create New Folder</h3>
+              <input
+                type="text"
+                value={newFolderName}
+                onChange={(e) => setNewFolderName(e.target.value)}
+                placeholder="Folder name..."
+                className="w-full px-3 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+                autoFocus
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && newFolderName.trim()) handleCreateFolder()
+                  if (e.key === 'Escape') {
+                    setShowNewFolderDialog(false)
+                    setNewFolderName('')
+                  }
+                }}
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => {
+                    setShowNewFolderDialog(false)
+                    setNewFolderName('')
+                  }}
+                  className="px-3 py-1.5 text-sm hover:bg-[var(--bg-tertiary)] rounded transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleCreateFolder}
+                  disabled={!newFolderName.trim() || creatingFolder}
+                  className="px-3 py-1.5 bg-[var(--accent)] hover:opacity-90 rounded text-sm font-medium disabled:opacity-50 transition-opacity"
+                >
+                  {creatingFolder ? 'Creating...' : 'Create'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

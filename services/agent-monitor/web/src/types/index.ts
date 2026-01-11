@@ -17,6 +17,7 @@ export interface Agent {
   worktree_path: string | null
   status: 'active' | 'inactive'
   is_leader: boolean
+  nickname: string | null
   created_at: string
 }
 

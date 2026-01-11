@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Header } from './components/layout/Header'
 import { Sidebar } from './components/layout/Sidebar'
 import { EditorTabs } from './components/editor/EditorTabs'
+import { Terminal } from './components/editor/Terminal'
 import { ChatPanel } from './components/chat/ChatPanel'
 import { ProjectDashboard } from './components/projects/ProjectDashboard'
 import { MonitorView } from './components/monitor/MonitorView'
@@ -12,6 +13,7 @@ import { useEditorStore } from './stores/editorStore'
 import { useWsStore } from './stores/wsStore'
 import { useChatStore } from './stores/chatStore'
 import { useIsMobile } from './hooks/useIsMobile'
+import { PanelLeftClose, PanelLeftOpen, TerminalSquare } from 'lucide-react'
 
 type AppView = 'dashboard' | 'ide'
 type IdeTab = 'monitor' | 'editor'
@@ -20,6 +22,9 @@ type IdeTab = 'monitor' | 'editor'
 const STORAGE_VIEW = 'cc-ide-view'
 const STORAGE_PROJECT = 'cc-ide-project'
 const STORAGE_TAB = 'cc-ide-tab'
+const STORAGE_SIDEBAR = 'cc-ide-sidebar'
+const STORAGE_TERMINAL = 'cc-ide-terminal'
+const STORAGE_TERMINAL_HEIGHT = 'cc-ide-terminal-height'
 
 function App() {
   // Initialize from localStorage
@@ -35,6 +40,18 @@ function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showSkills, setShowSkills] = useState(false)
   const [initialized, setInitialized] = useState(false)
+  const [showSidebar, setShowSidebar] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_SIDEBAR)
+    return saved !== 'false'
+  })
+  const [showTerminal, setShowTerminal] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_TERMINAL)
+    return saved === 'true'
+  })
+  const [terminalHeight, setTerminalHeight] = useState(() => {
+    const saved = localStorage.getItem(STORAGE_TERMINAL_HEIGHT)
+    return saved ? parseInt(saved) : 200
+  })
 
   const isMobile = useIsMobile()
 
@@ -80,6 +97,18 @@ function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_TAB, ideTab)
   }, [ideTab])
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_SIDEBAR, showSidebar.toString())
+  }, [showSidebar])
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_TERMINAL, showTerminal.toString())
+  }, [showTerminal])
+
+  useEffect(() => {
+    localStorage.setItem(STORAGE_TERMINAL_HEIGHT, terminalHeight.toString())
+  }, [terminalHeight])
 
   useEffect(() => {
     if (activeProject) {
@@ -190,14 +219,64 @@ function App() {
       <div className="flex-1 flex overflow-hidden">
         {ideTab === 'editor' ? (
           <>
-            <Sidebar width={sidebarWidth} />
-            <EditorTabs />
+            {/* Sidebar toggle button when collapsed */}
+            {!showSidebar && (
+              <button
+                onClick={() => setShowSidebar(true)}
+                className="h-full w-8 flex items-center justify-center bg-[var(--bg-secondary)] border-r border-[var(--border)] hover:bg-[var(--bg-tertiary)] transition-colors"
+                title="Show sidebar"
+              >
+                <PanelLeftOpen size={16} className="text-[var(--text-secondary)]" />
+              </button>
+            )}
+            {showSidebar && (
+              <div className="flex flex-col h-full" style={{ width: sidebarWidth }}>
+                <div className="flex-1 overflow-hidden">
+                  <Sidebar width="100%" />
+                </div>
+                <button
+                  onClick={() => setShowSidebar(false)}
+                  className="h-6 flex items-center justify-center bg-[var(--bg-secondary)] border-r border-t border-[var(--border)] hover:bg-[var(--bg-tertiary)] transition-colors flex-shrink-0"
+                  title="Hide sidebar"
+                >
+                  <PanelLeftClose size={14} className="text-[var(--text-secondary)]" />
+                </button>
+              </div>
+            )}
+            <div className="flex-1 flex flex-col overflow-hidden">
+              <EditorTabs />
+              {showTerminal && (
+                <Terminal
+                  height={terminalHeight}
+                  onClose={() => setShowTerminal(false)}
+                  onHeightChange={setTerminalHeight}
+                />
+              )}
+            </div>
           </>
         ) : (
           <MonitorView />
         )}
         <ChatPanel width={chatPanelWidth} />
       </div>
+
+      {/* Bottom bar with terminal toggle */}
+      {ideTab === 'editor' && (
+        <div className="h-6 flex items-center px-2 bg-[var(--bg-secondary)] border-t border-[var(--border)]">
+          <button
+            onClick={() => setShowTerminal(!showTerminal)}
+            className={`flex items-center gap-1 px-2 py-0.5 text-xs rounded transition-colors ${
+              showTerminal
+                ? 'bg-[var(--accent)] text-white'
+                : 'text-[var(--text-secondary)] hover:text-white hover:bg-[var(--bg-tertiary)]'
+            }`}
+            title={showTerminal ? 'Hide terminal' : 'Show terminal'}
+          >
+            <TerminalSquare size={12} />
+            <span>Terminal</span>
+          </button>
+        </div>
+      )}
 
       {/* Settings Modal */}
       {showSettings && (

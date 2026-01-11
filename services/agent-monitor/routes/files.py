@@ -55,7 +55,7 @@ async def list_project_modules(project_id: str, subpath: str = ""):
 
 
 @router.get("/files/browse")
-async def browse_directories(path: str = None):
+async def browse_directories(path: str = None, show_hidden: bool = False):
     """Browse directories for path selection."""
     if not path:
         path = str(Path.home())
@@ -70,6 +70,9 @@ async def browse_directories(path: str = None):
     try:
         for item in sorted(target_path.iterdir(), key=lambda x: x.name.lower()):
             if item.is_dir():
+                # Skip hidden directories unless show_hidden is True
+                if not show_hidden and item.name.startswith('.'):
+                    continue
                 is_git_repo = (item / ".git").exists()
                 directories.append({
                     "name": item.name,
@@ -80,11 +83,13 @@ async def browse_directories(path: str = None):
         pass
 
     parent = str(target_path.parent) if target_path.parent != target_path else None
+    is_git_repo = (target_path / ".git").exists()
 
     return {
         "current_path": str(target_path),
         "parent": parent,
         "directories": directories,
+        "is_git_repo": is_git_repo,
     }
 
 
@@ -264,3 +269,35 @@ async def rename_file(request: dict):
         return {"old_path": old_path, "new_path": new_path}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/terminal/exec")
+async def execute_terminal_command(request: dict):
+    """Execute a shell command in the active project directory."""
+    command = request.get("command")
+    if not command:
+        raise HTTPException(status_code=400, detail="Missing command")
+
+    # Get active project for working directory
+    project = db.get_active_project()
+    cwd = project["root_path"] if project else str(Path.home())
+
+    try:
+        result = subprocess.run(
+            command,
+            shell=True,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=30  # 30 second timeout
+        )
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "returncode": result.returncode,
+            "cwd": cwd
+        }
+    except subprocess.TimeoutExpired:
+        return {"error": "Command timed out after 30 seconds", "cwd": cwd}
+    except Exception as e:
+        return {"error": str(e), "cwd": cwd}

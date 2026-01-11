@@ -14,12 +14,13 @@ interface ProjectState {
   fetchProjects: () => Promise<void>
   fetchActiveProject: () => Promise<void>
   selectProject: (projectId: string) => Promise<void>
-  createProject: (name: string, rootPath: string, description?: string) => Promise<Project>
+  createProject: (name: string, rootPath: string, description?: string, initGit?: boolean) => Promise<Project>
   deleteProject: (projectId: string) => Promise<void>
   fetchAgents: (projectId: string) => Promise<void>
   createAgent: (projectId: string, name: string, domain: string) => Promise<Agent>
   deleteAgent: (projectId: string, agentId: string, removeWorktree?: boolean) => Promise<void>
   setLeader: (projectId: string, agentId: string) => Promise<Agent>
+  updateAgent: (projectId: string, agentId: string, updates: { nickname?: string }) => Promise<Agent>
   syncWorktrees: (projectId: string) => Promise<{ created: number; skipped: number }>
   fetchSettings: () => Promise<void>
   updateSettings: (settings: Partial<GlobalSettings>) => Promise<void>
@@ -66,16 +67,19 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
       const project = await res.json()
       set({ activeProject: project, loading: false })
       get().fetchAgents(project.id)
+      // Clear chat session and reset agent when switching projects
+      localStorage.removeItem('cc-chat-session')
+      localStorage.setItem('cc-chat-agent', 'leader')
     } catch (err) {
       set({ error: 'Failed to select project', loading: false })
     }
   },
 
-  createProject: async (name: string, rootPath: string, description = '') => {
+  createProject: async (name: string, rootPath: string, description = '', initGit = false) => {
     const res = await fetch('/api/projects', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, root_path: rootPath, description }),
+      body: JSON.stringify({ name, root_path: rootPath, description, init_git: initGit }),
     })
     if (!res.ok) {
       const err = await res.json()
@@ -84,6 +88,9 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
     const project = await res.json()
     set(state => ({ projects: [...state.projects, project], activeProject: project }))
     get().fetchAgents(project.id)
+    // Clear chat session and reset agent for new project
+    localStorage.removeItem('cc-chat-session')
+    localStorage.setItem('cc-chat-agent', 'leader')
     return project
   },
 
@@ -147,6 +154,24 @@ export const useProjectStore = create<ProjectState>((set, get) => ({
         ...a,
         is_leader: a.id === agentId,
       })),
+    }))
+    return agent
+  },
+
+  updateAgent: async (projectId: string, agentId: string, updates: { nickname?: string }) => {
+    const res = await fetch(`/api/projects/${projectId}/agents/${agentId}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updates),
+    })
+    if (!res.ok) {
+      const err = await res.json()
+      throw new Error(err.detail || 'Failed to update agent')
+    }
+    const agent = await res.json()
+    // Update the agent in local state
+    set(state => ({
+      agents: state.agents.map(a => a.id === agentId ? { ...a, ...updates } : a),
     }))
     return agent
   },

@@ -15,7 +15,7 @@ export function AgentGrid({ onAgentSelect, selectedAgent }: AgentGridProps) {
   const [syncing, setSyncing] = useState(false)
   const [syncResult, setSyncResult] = useState<string | null>(null)
   const { agentStates } = useWsStore()
-  const { agents: dbAgents, activeProject, createAgent, syncWorktrees, setLeader, deleteAgent } = useProjectStore()
+  const { agents: dbAgents, activeProject, createAgent, syncWorktrees, setLeader, deleteAgent, updateAgent } = useProjectStore()
 
   const handleSyncWorktrees = async () => {
     if (!activeProject || syncing) return
@@ -44,6 +44,7 @@ export function AgentGrid({ onAgentSelect, selectedAgent }: AgentGridProps) {
     run_count: agentStates[a.name]?.run_count || 0,
     current_task: agentStates[a.name]?.current_task,
     is_leader: a.is_leader,
+    nickname: a.nickname,
   }))
 
   // Add any agents from WS that aren't in DB (legacy support)
@@ -78,6 +79,15 @@ export function AgentGrid({ onAgentSelect, selectedAgent }: AgentGridProps) {
     }
   }
 
+  const handleUpdateNickname = async (agentId: string, nickname: string) => {
+    if (!activeProject) return
+    try {
+      await updateAgent(activeProject.id, agentId, { nickname: nickname || undefined })
+    } catch (err: any) {
+      console.error('Failed to update nickname:', err.message)
+    }
+  }
+
   return (
     <div className="p-4">
       <div className="flex items-center justify-between mb-3">
@@ -106,6 +116,7 @@ export function AgentGrid({ onAgentSelect, selectedAgent }: AgentGridProps) {
             onClick={() => onAgentSelect(agent.agent)}
             onSetLeader={agent.id ? () => handleSetLeader(agent.id!) : undefined}
             onRemove={agent.id ? (removeWorktree) => handleRemoveAgent(agent.id!, removeWorktree) : undefined}
+            onUpdateNickname={agent.id ? (nickname) => handleUpdateNickname(agent.id!, nickname) : undefined}
           />
         ))}
 

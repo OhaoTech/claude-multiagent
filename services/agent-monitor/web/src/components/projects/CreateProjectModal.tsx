@@ -1,16 +1,18 @@
 import { useState } from 'react'
-import { X, FolderPlus, FolderOpen } from 'lucide-react'
+import { X, FolderPlus, FolderOpen, FolderGit } from 'lucide-react'
 import { PathSelector } from '../common/PathSelector'
 
 interface CreateProjectModalProps {
   onClose: () => void
-  onCreate: (name: string, path: string, description: string) => Promise<void>
+  onCreate: (name: string, path: string, description: string, initGit: boolean) => Promise<void>
 }
 
 export function CreateProjectModal({ onClose, onCreate }: CreateProjectModalProps) {
   const [name, setName] = useState('')
   const [path, setPath] = useState('')
   const [description, setDescription] = useState('')
+  const [isGitRepo, setIsGitRepo] = useState(false)
+  const [initGit, setInitGit] = useState(true)  // Default to true for new folders
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPathSelector, setShowPathSelector] = useState(false)
@@ -22,11 +24,17 @@ export function CreateProjectModal({ onClose, onCreate }: CreateProjectModalProp
       return
     }
 
+    // If not a git repo and user didn't check init_git, show error
+    if (!isGitRepo && !initGit) {
+      setError('Please enable "Initialize git repository" or select a git repository')
+      return
+    }
+
     setLoading(true)
     setError('')
 
     try {
-      await onCreate(name.trim(), path.trim(), description.trim())
+      await onCreate(name.trim(), path.trim(), description.trim(), !isGitRepo && initGit)
       onClose()
     } catch (err: any) {
       setError(err.message || 'Failed to create project')
@@ -73,8 +81,15 @@ export function CreateProjectModal({ onClose, onCreate }: CreateProjectModalProp
           <div>
             <label className="block text-sm font-medium mb-1">Project Path</label>
             <div className="flex gap-2">
-              <div className="flex-1 px-3 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-sm truncate">
-                {path || <span className="text-[var(--text-secondary)]">No directory selected</span>}
+              <div className="flex-1 px-3 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-sm truncate flex items-center gap-2">
+                {path ? (
+                  <>
+                    {isGitRepo && <FolderGit size={14} className="text-orange-400 flex-shrink-0" />}
+                    <span className="truncate">{path}</span>
+                  </>
+                ) : (
+                  <span className="text-[var(--text-secondary)]">No directory selected</span>
+                )}
               </div>
               <button
                 type="button"
@@ -85,9 +100,28 @@ export function CreateProjectModal({ onClose, onCreate }: CreateProjectModalProp
                 Browse
               </button>
             </div>
-            <p className="text-xs text-[var(--text-secondary)] mt-1">
-              Select a directory with a git repository
-            </p>
+            {path && !isGitRepo && (
+              <div className="mt-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={initGit}
+                    onChange={(e) => setInitGit(e.target.checked)}
+                    className="w-4 h-4 rounded border-[var(--border)] bg-[var(--bg-tertiary)]"
+                  />
+                  <span className="text-sm">Initialize git repository</span>
+                </label>
+                <p className="text-xs text-[var(--text-secondary)] mt-1 ml-6">
+                  This folder is not a git repository. Enable to run `git init`.
+                </p>
+              </div>
+            )}
+            {path && isGitRepo && (
+              <p className="text-xs text-green-400 mt-1 flex items-center gap-1">
+                <FolderGit size={12} />
+                Git repository detected
+              </p>
+            )}
           </div>
 
           <div>
@@ -123,8 +157,9 @@ export function CreateProjectModal({ onClose, onCreate }: CreateProjectModalProp
         {showPathSelector && (
           <PathSelector
             value={path}
-            onChange={(selectedPath) => {
+            onChange={(selectedPath, gitRepo) => {
               setPath(selectedPath)
+              setIsGitRepo(gitRepo)
               // Auto-fill name from directory name if empty
               if (!name.trim()) {
                 const dirName = selectedPath.split('/').pop() || ''
@@ -132,7 +167,7 @@ export function CreateProjectModal({ onClose, onCreate }: CreateProjectModalProp
               }
             }}
             onClose={() => setShowPathSelector(false)}
-            requireGitRepo={true}
+            requireGitRepo={false}
           />
         )}
       </div>

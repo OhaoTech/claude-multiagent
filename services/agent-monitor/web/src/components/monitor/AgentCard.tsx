@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Crown, Play, Pause, AlertCircle, Trash2 } from 'lucide-react'
+import { Crown, Play, Pause, AlertCircle, Trash2, Pencil } from 'lucide-react'
 import type { AgentState } from '../../stores/wsStore'
 
 interface AgentCardProps {
@@ -8,6 +8,7 @@ interface AgentCardProps {
   onClick: () => void
   onSetLeader?: () => void
   onRemove?: (removeWorktree: boolean) => void
+  onUpdateNickname?: (nickname: string) => void
 }
 
 const statusColors = {
@@ -24,11 +25,13 @@ const statusIcons = {
   error: AlertCircle,
 }
 
-export function AgentCard({ agent, isSelected, onClick, onSetLeader, onRemove }: AgentCardProps) {
+export function AgentCard({ agent, isSelected, onClick, onSetLeader, onRemove, onUpdateNickname }: AgentCardProps) {
   const StatusIcon = statusIcons[agent.state] || Pause
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [showRemoveDialog, setShowRemoveDialog] = useState(false)
+  const [showNicknameDialog, setShowNicknameDialog] = useState(false)
   const [removeWorktree, setRemoveWorktree] = useState(true)
+  const [nicknameInput, setNicknameInput] = useState(agent.nickname || '')
   const menuRef = useRef<HTMLDivElement>(null)
 
   // Close context menu when clicking outside
@@ -64,6 +67,17 @@ export function AgentCard({ agent, isSelected, onClick, onSetLeader, onRemove }:
     onRemove?.(removeWorktree)
   }
 
+  const handleNicknameClick = () => {
+    setContextMenu(null)
+    setNicknameInput(agent.nickname || '')
+    setShowNicknameDialog(true)
+  }
+
+  const handleSaveNickname = () => {
+    setShowNicknameDialog(false)
+    onUpdateNickname?.(nicknameInput.trim())
+  }
+
   return (
     <>
       <button
@@ -75,7 +89,16 @@ export function AgentCard({ agent, isSelected, onClick, onSetLeader, onRemove }:
       >
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
-            <span className="font-semibold">{agent.agent}</span>
+            <div className="flex flex-col">
+              <span className="font-semibold">
+                {agent.nickname || agent.agent}
+              </span>
+              {agent.nickname && (
+                <span className="text-[10px] text-[var(--text-secondary)]">
+                  {agent.agent}
+                </span>
+              )}
+            </div>
             {agent.is_leader && (
               <Crown size={14} className="text-yellow-500" />
             )}
@@ -133,6 +156,15 @@ export function AgentCard({ agent, isSelected, onClick, onSetLeader, onRemove }:
                   Current Leader
                 </div>
               )}
+              {onUpdateNickname && (
+                <button
+                  onClick={handleNicknameClick}
+                  className="w-full px-3 py-2 text-left text-sm flex items-center gap-2 hover:bg-[var(--bg-tertiary)] transition-colors"
+                >
+                  <Pencil size={14} />
+                  {agent.nickname ? 'Edit Nickname' : 'Set Nickname'}
+                </button>
+              )}
               <div className="border-t border-[var(--border)] my-1" />
               <button
                 onClick={handleRemoveClick}
@@ -188,6 +220,46 @@ export function AgentCard({ agent, isSelected, onClick, onSetLeader, onRemove }:
                 className="px-4 py-2 bg-red-600 hover:bg-red-700 rounded text-sm font-medium transition-colors"
               >
                 Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Nickname Edit Dialog */}
+      {showNicknameDialog && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-[var(--bg-secondary)] rounded-lg w-[350px] p-4">
+            <h3 className="text-lg font-semibold mb-3">Set Nickname</h3>
+            <p className="text-sm text-[var(--text-secondary)] mb-4">
+              Give <strong>{agent.agent}</strong> a friendly name (display only)
+            </p>
+
+            <input
+              type="text"
+              value={nicknameInput}
+              onChange={(e) => setNicknameInput(e.target.value)}
+              placeholder="Enter nickname..."
+              className="w-full px-3 py-2 bg-[var(--bg-tertiary)] border border-[var(--border)] rounded text-sm mb-4 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
+              autoFocus
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSaveNickname()
+                if (e.key === 'Escape') setShowNicknameDialog(false)
+              }}
+            />
+
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setShowNicknameDialog(false)}
+                className="px-4 py-2 text-sm hover:bg-[var(--bg-tertiary)] rounded transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleSaveNickname}
+                className="px-4 py-2 bg-[var(--accent)] hover:opacity-90 rounded text-sm font-medium transition-colors"
+              >
+                Save
               </button>
             </div>
           </div>

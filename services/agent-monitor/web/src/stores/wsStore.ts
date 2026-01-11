@@ -7,6 +7,7 @@ export interface AgentState {
   current_task?: string
   elapsed?: number
   is_leader?: boolean
+  nickname?: string | null
 }
 
 export interface ActivityItem {
