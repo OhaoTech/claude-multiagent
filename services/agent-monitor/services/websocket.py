@@ -21,11 +21,17 @@ class ConnectionManager:
     async def broadcast(self, message: dict):
         """Send message to all connected clients."""
         message["timestamp"] = time.time()
+        disconnected = []
         for connection in self.active_connections:
             try:
                 await connection.send_json(message)
-            except Exception:
-                pass  # Client disconnected
+            except Exception as e:
+                # Track disconnected clients for cleanup
+                disconnected.append(connection)
+
+        # Remove disconnected clients
+        for connection in disconnected:
+            self.disconnect(connection)
 
 
 # Global manager instance

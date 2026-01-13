@@ -235,4 +235,11 @@ if __name__ == "__main__":
     import uvicorn
     print(f"Starting Agent Monitor on http://0.0.0.0:{PORT}")
     print(f"Access from phone: http://<your-ip>:{PORT}")
-    uvicorn.run(app, host="0.0.0.0", port=PORT)
+    uvicorn.run(
+        app,
+        host="0.0.0.0",
+        port=PORT,
+        ws_ping_interval=20,  # Send ping every 20 seconds
+        ws_ping_timeout=60,   # Wait 60 seconds for pong response
+        timeout_keep_alive=120  # Keep HTTP connections alive for 120 seconds
+    )

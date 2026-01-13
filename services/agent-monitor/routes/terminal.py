@@ -133,8 +133,13 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
             return_when=asyncio.FIRST_COMPLETED
         )
 
+        # Cancel pending tasks gracefully
         for task in pending:
             task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass  # Expected when cancelling
 
     except Exception as e:
         print(f"[TERMINAL] Error: {e}")

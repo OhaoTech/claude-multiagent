@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 # Repository root
-REPO_ROOT = Path(os.environ.get("REPO_ROOT", "/home/frankyin/lab/claude-multiagent"))
+REPO_ROOT = Path(__file__).parent.parent.parent
 
 # Agent mail paths
 AGENT_MAIL_PATH = REPO_ROOT / ".agent-mail"
