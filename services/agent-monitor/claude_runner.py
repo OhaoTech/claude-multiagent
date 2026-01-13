@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import tempfile
 from pathlib import Path
 from typing import AsyncGenerator, Callable, Optional
@@ -132,8 +133,11 @@ class ClaudeRunner:
                 except Exception as e:
                     print(f"[RUNNER] Failed to save image {i}: {e}")
 
-        # Build command
-        cmd_parts = ["claude"]
+        # Build command - resolve claude path for Windows compatibility
+        claude_path = shutil.which("claude")
+        if claude_path is None:
+            raise RuntimeError("Claude CLI not found in PATH. Please install claude-code.")
+        cmd_parts = [claude_path]
 
         # Add model selection
         if model and model in ("haiku", "sonnet", "opus"):

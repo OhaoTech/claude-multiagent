@@ -1,20 +1,38 @@
 """Session reader for Claude Code session files."""
 
 import json
+import platform
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from models import SessionInfo, SessionMessage
 
+# Detect if running on Windows
+IS_WINDOWS = platform.system() == "Windows"
+
 
 def path_to_claude_dir_name(path: str) -> str:
     """Convert a filesystem path to Claude's project directory naming convention.
 
     Claude replaces slashes with hyphens and also converts underscores to hyphens.
+    On Windows, colons are also replaced with hyphens.
     e.g., /home/frankyin/lab/my_project -> -home-frankyin-lab-my-project
+    e.g., C:\\Users\\djmax\\Desktop\\lab -> C--Users-djmax-Desktop-lab
     """
-    return path.replace("/", "-").replace("\\", "-").replace("_", "-")
+    # On Windows, also replace colons (from drive letters like C:)
+    result = path.replace(":", "-").replace("/", "-").replace("\\", "-").replace("_", "-")
+    return result
+
+
+def match_claude_dir_name(dir_name: str, pattern: str) -> bool:
+    """Check if a Claude directory name matches a pattern.
+
+    On Windows, comparison is case-insensitive due to drive letter casing variations.
+    """
+    if IS_WINDOWS:
+        return dir_name.lower() == pattern.lower()
+    return dir_name == pattern
 
 
 def get_project_sessions_dirs(project_root: str, agents: list[dict] = None) -> list[tuple[Path, str]]:
@@ -76,10 +94,11 @@ def get_project_sessions_dirs(project_root: str, agents: list[dict] = None) -> l
 
         # Check if this directory matches any of our known paths
         # Use exact match: directory name must equal pattern exactly
+        # On Windows, use case-insensitive matching for drive letter variations
         agent_name = None
         for pattern, name in sorted_patterns:
             # Exact match - the directory name should be exactly the pattern
-            if p.name == pattern:
+            if match_claude_dir_name(p.name, pattern):
                 agent_name = name
                 break
 

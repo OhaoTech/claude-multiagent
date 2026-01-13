@@ -2,12 +2,7 @@
 
 import asyncio
 import os
-import pty
-import select
-import struct
-import fcntl
-import termios
-import signal
+import platform
 from pathlib import Path
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -15,6 +10,25 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 import database as db
 
 router = APIRouter(tags=["terminal"])
+
+# Check if running on Unix-like system
+IS_UNIX = platform.system() != 'Windows'
+
+if IS_UNIX:
+    import pty
+    import select
+    import struct
+    import fcntl
+    import termios
+    import signal
+else:
+    # On Windows, these modules are not available
+    pty = None
+    select = None
+    struct = None
+    fcntl = None
+    termios = None
+    signal = None
 
 # Store active PTY sessions
 pty_sessions: dict[str, dict] = {}
@@ -25,6 +39,11 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
     """WebSocket endpoint for interactive terminal with PTY."""
     await websocket.accept()
     print(f"[TERMINAL] WebSocket connected: {terminal_id}")
+
+    if not IS_UNIX:
+        await websocket.send_text("Terminal functionality is not supported on Windows")
+        await websocket.close()
+        return
 
     # Get working directory from active project
     project = db.get_active_project()
@@ -163,6 +182,9 @@ async def terminal_websocket(websocket: WebSocket, terminal_id: str):
 @router.post("/api/terminal/{terminal_id}/resize")
 async def resize_terminal(terminal_id: str, cols: int, rows: int):
     """Resize terminal."""
+    if not IS_UNIX:
+        return {"error": "Terminal functionality is not supported on Windows"}
+
     if terminal_id not in pty_sessions:
         return {"error": "Terminal not found"}
 
